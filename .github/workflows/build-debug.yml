@@ -52,6 +52,9 @@ jobs:
       - name: pnpm install
         run: pnpm i --frozen-lockfile
 
+      - name: 生成全套图标
+        run: pnpm tauri icon src-tauri/icons/icon.png
+
       - name: Prepare Android project
         run: pnpm android:prepare
 
