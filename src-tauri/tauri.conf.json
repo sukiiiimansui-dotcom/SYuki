@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LingChat",
+  "productName": "SYuki",
   "version": "0.5.1",
   "identifier": "com.syuki.lingchat",
   "build": {
