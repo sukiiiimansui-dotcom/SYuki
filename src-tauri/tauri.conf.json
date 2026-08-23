@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "LingChat",
-  "version": "0.5.0",
-  "identifier": "com.noiq.ling-chat",
+  "version": "0.5.1",
+  "identifier": "com.syuki.lingchat",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
