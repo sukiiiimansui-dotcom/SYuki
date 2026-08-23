@@ -10,6 +10,7 @@ pub mod font;
 pub mod game;
 pub mod locale;
 pub mod music;
+pub mod netmusic;
 pub mod pet;
 // 插件命令由 RustPython 驱动，移动端（Android/iOS）不编译
 #[cfg(desktop)]

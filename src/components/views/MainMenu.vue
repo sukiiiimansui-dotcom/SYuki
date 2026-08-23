@@ -50,6 +50,7 @@
           @open-credits="handleOpenCredits"
           @open-workshop="showWorkshopMenu"
           @open-bili="() => router.push('/bilibili')"
+          @open-netmusic="() => router.push('/netmusic')"
           @open-script-editor="() => router.push('/script-editor')"
         />
       </Transition>

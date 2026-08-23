@@ -13,6 +13,9 @@
       <StartItem @click="() => emit('open-bili')">B站学习</StartItem>
     </StartLine>
     <StartLine>
+      <StartItem @click="() => emit('open-netmusic')">网易云</StartItem>
+    </StartLine>
+    <StartLine>
       <StartItem @click="() => emit('open-settings')">{{ $t('views.menu.gameConfig') }}</StartItem>
     </StartLine>
     <StartLine>
@@ -35,6 +38,7 @@ const emit = defineEmits<{
   (e: 'open-credits'): void
   (e: 'open-workshop'): void
   (e: 'open-bili'): void
+  (e: 'open-netmusic'): void
 }>()
 
 // 保留 Current 的退出逻辑

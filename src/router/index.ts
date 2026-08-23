@@ -13,6 +13,7 @@ const LogWindow = () => import('../components/views/LogWindow.vue')
 // 非懒加载的 view 会整个进主 chunk
 const ScriptEditor = () => import('../components/views/ScriptEditor.vue')
 const Bilibili = () => import('../components/views/Bilibili.vue')
+const NetMusic = () => import('../components/views/NetMusic.vue')
 
 // 1. 定义路由表
 const routes = [
@@ -55,6 +56,11 @@ const routes = [
     path: '/bilibili',
     name: 'Bilibili',
     component: Bilibili,
+  },
+  {
+    path: '/netmusic',
+    name: 'NetMusic',
+    component: NetMusic,
   },
 ]
 

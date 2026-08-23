@@ -1,4 +1,5 @@
 pub mod bilibili;
+pub mod netmusic;
 pub mod background_command;
 pub mod character;
 pub mod clock;
@@ -27,6 +28,7 @@ use crate::ai_service::game_system::game_status::GameStatus;
 use crate::AppState;
 
 use bilibili::{BiliKnowledgeTool, BiliLearnTool, BiliSearchTool};
+use netmusic::{NetMusicRecommendTool, NetMusicSearchTool};
 use character::{CharacterList, CharacterSwitch};
 use clock::CurrentTimeTool;
 use memory::{AddNote, DeleteNote, GetCurrentMemory, GetNotes, UpdateNote};
@@ -99,6 +101,8 @@ pub fn built_in_registry(
     registry.register(Arc::new(BiliSearchTool::new()))?;
     registry.register(Arc::new(BiliLearnTool::new(crate::api::data_dir())))?;
     registry.register(Arc::new(BiliKnowledgeTool::new(crate::api::data_dir())))?;
+    registry.register(Arc::new(NetMusicSearchTool::new()))?;
+    registry.register(Arc::new(NetMusicRecommendTool::new()))?;
     registry.register(Arc::new(WebSearchTool::new(tool_settings.clone(), app)))?;
     registry.register(Arc::new(GetAllSchedule))?;
     registry.register(Arc::new(AddTodo))?;

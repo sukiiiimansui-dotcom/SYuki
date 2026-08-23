@@ -1,4 +1,5 @@
 pub mod bilibili_service;
+pub mod netmusic_service;
 pub mod config;
 pub mod emotion;
 pub mod game_system;
