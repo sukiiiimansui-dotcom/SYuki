@@ -55,8 +55,10 @@ jobs:
       - name: 生成全套图标
         run: pnpm tauri icon src-tauri/icons/icon.png
 
-      - name: Prepare Android project
-        run: pnpm android:prepare
+      - name: Prepare Android project (drop gen/android so tauri regenerates with current identifier)
+        run: |
+          rm -rf src-tauri/gen/android
+          pnpm android:prepare
 
       - name: Build APK (debug)
         run: pnpm android:build
