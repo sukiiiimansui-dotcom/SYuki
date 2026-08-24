@@ -1,4 +1,4 @@
-package com.noiq.lingchat
+package com.syuki.lingchat
 
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
