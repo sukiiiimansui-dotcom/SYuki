@@ -55,12 +55,8 @@ async fn search_netease(client: &Client, keyword: &str, limit: usize) -> Vec<Net
     let resp = client
         .post(format!("{API_BASE}/api/search/get/web"))
         .header(reqwest::header::REFERER, "https://music.163.com/")
-        .form(&[
-            ("s", keyword.to_string()),
-            ("type", "1".to_string()),
-            ("limit", limit.max(1).to_string()),
-            ("offset", "0".to_string()),
-        ])
+        .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(format!("s={}&type=1&limit={}&offset=0", form_encode(keyword), limit.max(1)))
         .send()
         .await;
     let Ok(resp) = resp else { return Vec::new() };
@@ -138,4 +134,16 @@ pub fn playing_url(song_id: u64) -> String {
 /// helper：mood 归一化。
 pub fn normalize_mood(mood: &str) -> String {
     mood.trim().to_lowercase()
+}
+
+/// 极简 URL 编码（form 参数）。
+fn form_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }
