@@ -1,76 +1,84 @@
 <template>
   <div class="bili-page">
-    <div class="bili-bg"></div>
-
     <div class="bili-inner">
-      <!-- 标题 + 返回 -->
-      <div class="bili-head">
-        <button class="bili-back" @click="goBack">‹ 返回</button>
-        <h1 class="bili-title">B站学习</h1>
-        <span class="bili-sub">热榜 · 搜索 · 弹幕文化库</span>
+      <header class="bili-header">
+        <button class="back" @click="goBack">‹</button>
+        <h1>B站学习</h1>
+        <span class="sub">热榜 · 搜索 · 学习时间轴</span>
+      </header>
+
+      <div class="search">
+        <input v-model="keyword" placeholder="搜索B站视频…" @keyup.enter="doSearch" />
+        <button class="btn" :disabled="loading" @click="doSearch">搜索</button>
       </div>
 
-      <!-- 搜索 -->
-      <div class="bili-search">
-        <input
-          v-model="keyword"
-          placeholder="搜索B站视频（如 零基础编程 / 猫娘 / Live2D）"
-          @keyup.enter="doSearch"
-        />
-        <button class="bili-btn" :disabled="loading" @click="doSearch">搜索</button>
-      </div>
+      <p v-if="error" class="err">{{ error }}</p>
+      <p v-if="loading" class="empty">加载中…</p>
 
-      <p v-if="error" class="bili-error">{{ error }}</p>
-
-      <!-- 热榜 -->
-      <section class="bili-card">
-        <div class="bili-card-head">
-          <h2>🔥 B站热榜</h2>
-          <button class="bili-btn-sm" @click="loadHot">刷新</button>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>热榜</h2>
+          <button class="btn ghost" :disabled="loading" @click="loadHot">刷新</button>
         </div>
-        <ul v-if="hot.length" class="bili-list">
-          <li v-for="bvid in hot" :key="bvid" class="bili-row">
-            <span class="bili-row-id">{{ bvid }}</span>
-            <button class="bili-btn-sm" @click="learn(bvid)">学习</button>
+        <ul v-if="hot.length" class="hot-list">
+          <li v-for="b in hot" :key="b" class="hot-row">
+            <span class="bvid">{{ b }}</span>
+            <button class="btn ghost" :disabled="loading" @click="learn(b)">学习</button>
           </li>
         </ul>
-        <p v-else class="bili-empty">热榜为空，点「刷新」加载</p>
+        <p v-else class="empty">点「刷新」加载热榜</p>
       </section>
 
-      <!-- 搜索结果 -->
-      <section v-if="searchItems.length" class="bili-card">
-        <div class="bili-card-head"><h2>📺 搜索结果</h2></div>
-        <ul class="bili-list">
-          <li v-for="s in searchItems" :key="s.bvid" class="bili-row">
-            <div class="bili-row-main">
-              <div class="bili-row-title">{{ s.title }}</div>
-              <div class="bili-row-meta">UP {{ s.up }} · 播放 {{ s.play }} · 赞 {{ s.like }}</div>
+      <section v-if="searchItems.length" class="panel">
+        <div class="panel-head"><h2>搜索结果</h2></div>
+        <ul class="res-list">
+          <li v-for="s in searchItems" :key="s.bvid" class="res-row">
+            <div>
+              <div class="t">{{ s.title }}</div>
+              <div class="m">UP {{ s.up }} · 播放 {{ s.play }} · 赞 {{ s.like }}</div>
             </div>
-            <button class="bili-btn-sm" @click="learn(s.bvid)">学习</button>
+            <button class="btn ghost" :disabled="loading" @click="learn(s.bvid)">学习</button>
           </li>
         </ul>
       </section>
 
-      <!-- 学习库 -->
-      <section class="bili-card">
-        <div class="bili-card-head">
-          <h2>📚 已学知识库</h2>
-          <button class="bili-btn-sm" @click="loadKnowledge">刷新</button>
+      <!-- 学习库：时间轴卡片 -->
+      <section class="panel">
+        <div class="panel-head">
+          <h2>学习时间轴</h2>
+          <button class="btn ghost" :disabled="loading" @click="loadKnowledge">刷新</button>
         </div>
-        <p v-if="loading" class="bili-empty">处理中…</p>
-        <ul v-else-if="knowledge.length" class="bili-list">
-          <li v-for="k in knowledge" :key="k.bvid" class="bili-item">
-            <div class="bili-row-title">{{ k.title }}（UP {{ k.up }}）</div>
-            <div class="bili-row-meta">分区 {{ k.tname }} · 学到 {{ k.learned_at }}</div>
-            <div v-if="k.repeat_danmaku" class="bili-tag-box">
-              <span class="bili-tag">弹幕梗</span>{{ k.repeat_danmaku }}
+        <p v-if="!knowledge.length" class="empty">还没学过，去热榜或搜索里学一个吧</p>
+        <div v-else class="timeline">
+          <div
+            v-for="(k, i) in knowledge"
+            :key="k.bvid"
+            class="tl-item"
+            :class="{ open: expanded === k.bvid }"
+          >
+            <div class="tl-marker">
+              <span v-if="i === 0" class="tl-now">新</span>
+              <span v-else class="tl-dot"></span>
             </div>
-            <div v-if="k.top_comments" class="bili-tag-box">
-              <span class="bili-tag">高赞评论</span>{{ k.top_comments }}
+            <div class="tl-card" @click="toggle(k.bvid)">
+              <div class="tl-top">
+                <div class="t">{{ k.title }}<span class="soft"> · {{ k.up }}</span></div>
+                <div class="m">{{ fmtTime(k.learned_at) }} · {{ k.tname }}</div>
+              </div>
+              <div v-if="k.repeat_danmaku" class="tag-row">
+                <span class="tag">弹幕梗</span>{{ k.repeat_danmaku }}
+              </div>
+              <div v-if="k.top_comments" class="tag-row">
+                <span class="tag">高赞评论</span>{{ k.top_comments }}
+              </div>
+              <div v-if="expanded === k.bvid" class="detail">
+                <p v-if="k.vdesc" class="desc">{{ k.vdesc }}</p>
+                <p v-if="k.culture" class="desc">文化：{{ k.culture }}</p>
+              </div>
+              <div class="expand">{{ expanded === k.bvid ? '收起' : '查看详情' }}</div>
             </div>
-          </li>
-        </ul>
-        <p v-else class="bili-empty">学习库还是空的，去热榜或搜索里学一个吧</p>
+          </div>
+        </div>
       </section>
     </div>
   </div>
@@ -89,11 +97,21 @@ const searchItems = ref<BiliSearchItem[]>([])
 const knowledge = ref<BiliVideo[]>([])
 const loading = ref(false)
 const error = ref('')
+const expanded = ref('')
 
 function goBack() {
   router.push('/')
 }
-
+function toggle(id: string) {
+  expanded.value = expanded.value === id ? '' : id
+}
+function fmtTime(ts: string): string {
+  const n = Number(ts)
+  if (!n) return ts || '—'
+  const d = new Date(n * 1000)
+  const p = (x: number) => x.toString().padStart(2, '0')
+  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
 async function loadHot() {
   loading.value = true
   error.value = ''
@@ -105,7 +123,6 @@ async function loadHot() {
     loading.value = false
   }
 }
-
 async function doSearch() {
   if (!keyword.value.trim()) return
   loading.value = true
@@ -118,7 +135,6 @@ async function doSearch() {
     loading.value = false
   }
 }
-
 async function learn(bvid: string) {
   loading.value = true
   error.value = ''
@@ -135,7 +151,6 @@ async function learn(bvid: string) {
     loading.value = false
   }
 }
-
 async function loadKnowledge() {
   try {
     knowledge.value = await biliKnowledge('', 20)
@@ -143,7 +158,6 @@ async function loadKnowledge() {
     error.value = typeof e === 'string' ? e : e?.message || '加载学习库失败'
   }
 }
-
 onMounted(() => {
   loadHot()
   loadKnowledge()
@@ -152,175 +166,227 @@ onMounted(() => {
 
 <style scoped>
 .bili-page {
-  position: relative;
-  width: 100%;
   min-height: 100vh;
-  overflow: hidden;
-  color: #eef4fb;
-}
-.bili-bg {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(1200px 600px at 20% 0%, #1b3a6b 0%, #0d1b33 45%, #05080f 100%);
-  z-index: -1;
+  background: #f4f6f8;
+  color: #1c2530;
 }
 .bili-inner {
   max-width: 760px;
   margin: 0 auto;
-  padding: 24px 20px 48px;
+  padding: 24px 20px 56px;
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
-.bili-head {
+.bili-header {
   display: flex;
   align-items: center;
   gap: 14px;
 }
-.bili-back {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #cfe3ff;
+.back {
+  background: #fff;
+  border: 1px solid #e3e8ee;
   border-radius: 999px;
   padding: 6px 14px;
   cursor: pointer;
+  color: #33445a;
 }
-.bili-title {
+h1 {
   font-size: 26px;
   font-weight: 700;
   margin: 0;
-  background: linear-gradient(90deg, #7fd0ff, #b9e6ff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  letter-spacing: 0.5px;
 }
-.bili-sub {
+.sub {
   font-size: 13px;
-  color: #8aa6c9;
+  color: #7c8aa0;
 }
-.bili-search {
+.search {
   display: flex;
   gap: 10px;
 }
-.bili-search input {
+.search input {
   flex: 1;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #fff;
+  border: 1px solid #e3e8ee;
   border-radius: 12px;
-  padding: 11px 14px;
-  color: #eef4fb;
+  padding: 12px 16px;
+  font-size: 15px;
+  color: #1c2530;
   outline: none;
 }
-.bili-search input::placeholder {
-  color: #6f87a8;
+.search input:focus {
+  border-color: #4a90d9;
 }
-.bili-btn,
-.bili-btn-sm {
-  background: linear-gradient(90deg, #2497d9, #44b7fe);
+.btn {
+  background: #4a90d9;
   border: none;
   color: #fff;
   font-weight: 600;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: filter 0.2s;
-}
-.bili-btn {
+  border-radius: 12px;
   padding: 0 22px;
+  cursor: pointer;
 }
-.bili-btn-sm {
+.btn:disabled {
+  opacity: 0.5;
+}
+.btn.ghost {
+  background: transparent;
+  border: 1px solid #dfe5ec;
+  color: #54708f;
   padding: 6px 14px;
+  border-radius: 999px;
   font-size: 13px;
 }
-.bili-btn:disabled,
-.bili-btn-sm:disabled {
-  filter: grayscale(0.5);
-  opacity: 0.6;
-}
-.bili-error {
-  color: #ff9aa0;
+.err {
+  color: #d9534f;
   font-size: 14px;
 }
-.bili-card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 18px;
-  padding: 16px 18px;
-  backdrop-filter: blur(10px);
+.empty {
+  color: #9aa7b8;
+  font-size: 13px;
+  margin: 6px 0;
 }
-.bili-card-head {
+.panel {
+  background: #fff;
+  border: 1px solid #e8edf3;
+  border-radius: 16px;
+  padding: 16px 18px;
+}
+.panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
-.bili-card-head h2 {
-  font-size: 17px;
+.panel-head h2 {
+  font-size: 16px;
   margin: 0;
+  font-weight: 700;
 }
-.bili-list {
+.hot-list,
+.res-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
-.bili-row {
+.hot-row,
+.res-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  background: #f8fafc;
   border-radius: 12px;
   padding: 10px 12px;
 }
-.bili-row-id {
+.bvid {
   font-family: monospace;
-  color: #9cc4ee;
+  color: #6d84a3;
   font-size: 13px;
 }
-.bili-row-main {
-  flex: 1;
-  min-width: 0;
-}
-.bili-row-title {
+.t {
   font-size: 15px;
   font-weight: 600;
-  color: #eef4fb;
+  color: #1c2530;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.bili-row-meta {
+.m {
   font-size: 12px;
-  color: #8aa6c9;
+  color: #8a97a9;
   margin-top: 3px;
 }
-.bili-item {
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 12px;
-  padding: 12px 14px;
+/* 学习时间轴 */
+.timeline {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 12px;
 }
-.bili-tag-box {
+.tl-item {
+  display: flex;
+  gap: 12px;
+}
+.tl-marker {
+  width: 20px;
+  display: flex;
+  justify-content: center;
+  padding-top: 10px;
+}
+.tl-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #b9c7d6;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 2px #e8edf3;
+}
+.tl-now {
+  background: #4a90d9;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+.tl-card {
+  flex: 1;
+  background: #f8fafc;
+  border: 1px solid #eef2f6;
+  border-radius: 14px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+.tl-card:hover {
+  box-shadow: 0 4px 18px rgba(20, 40, 70, 0.06);
+}
+.tl-top .t {
+  font-size: 15px;
+}
+.tl-top .m {
+  font-size: 12px;
+  color: #8a97a9;
+  margin-top: 3px;
+}
+.soft {
+  color: #8a97a9;
+  font-weight: 400;
   font-size: 13px;
-  color: #c9ddf5;
-  line-height: 1.5;
 }
-.bili-tag {
+.tag-row {
+  font-size: 13px;
+  color: #42536b;
+  line-height: 1.6;
+  margin-top: 9px;
+}
+.tag {
   display: inline-block;
-  background: rgba(68, 183, 254, 0.22);
-  color: #7fd0ff;
+  background: #eaf1fb;
+  color: #2b6bb0;
   border-radius: 6px;
   padding: 1px 7px;
   margin-right: 7px;
   font-size: 12px;
 }
-.bili-empty {
-  color: #6f87a8;
+.detail {
+  border-top: 1px dashed #e3e8ee;
+  margin-top: 10px;
+  padding-top: 10px;
+}
+.desc {
   font-size: 13px;
-  margin: 6px 0;
+  color: #54657c;
+  line-height: 1.6;
+  margin: 0 0 6px;
+}
+.expand {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #4a90d9;
 }
 </style>

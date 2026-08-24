@@ -1,41 +1,37 @@
 <template>
   <div class="nm-page">
-    <div class="nm-bg"></div>
-
     <div class="nm-inner">
-      <div class="nm-head">
-        <button class="nm-back" @click="goBack">‹ 返回</button>
-        <h1 class="nm-title">网易云音乐</h1>
-        <span class="nm-sub">搜索 · 心情推歌</span>
+      <header class="nm-header">
+        <button class="back" @click="goBack">‹</button>
+        <h1><img class="ico" src="/assets/openmoji/1F3B5.svg" alt="" /> 网易云音乐</h1>
+        <span class="sub">搜索 · 心情推歌</span>
+      </header>
+
+      <div class="search">
+        <input v-model="keyword" placeholder="搜歌 / 歌手…" @keyup.enter="doSearch" />
+        <button class="btn" :disabled="loading" @click="doSearch">搜索</button>
       </div>
 
-      <div class="nm-search">
-        <input v-model="keyword" placeholder="搜歌 / 歌手（如 周杰伦 晴天）" @keyup.enter="doSearch" />
-        <button class="nm-btn" :disabled="loading" @click="doSearch">搜索</button>
+      <div class="moods">
+        <span class="mood-label">按心情推：</span>
+        <button v-for="m in moods" :key="m" class="pill" :disabled="loading" @click="recommend(m)">{{ m }}</button>
       </div>
 
-      <div class="nm-moods">
-        <span class="nm-mood-label">按心情推：</span>
-        <button v-for="m in moods" :key="m" class="nm-btn-sm" :disabled="loading" @click="recommend(m)">
-          {{ m }}
-        </button>
-      </div>
+      <p v-if="error" class="err">{{ error }}</p>
+      <p v-if="loading" class="empty">加载中…</p>
 
-      <p v-if="error" class="nm-error">{{ error }}</p>
-      <p v-if="loading" class="nm-empty">加载中…</p>
-
-      <section v-if="songs.length" class="nm-card">
-        <ul class="nm-list">
-          <li v-for="s in songs" :key="s.url" class="nm-item">
-            <div class="nm-row-main">
-              <div class="nm-row-title">{{ s.title }}<span class="nm-artist"> - {{ s.artist }}</span></div>
-              <div class="nm-row-meta">{{ s.album }} · {{ fmt(s.duration) }}</div>
+      <section v-if="songs.length" class="panel">
+        <ul class="song-list">
+          <li v-for="s in songs" :key="s.url" class="song-row">
+            <div>
+              <div class="t">{{ s.title }}<span class="soft"> · {{ s.artist }}</span></div>
+              <div class="m">{{ s.album }} · {{ fmt(s.duration) }}</div>
             </div>
-            <a class="nm-btn-sm" :href="s.url" target="_blank" rel="noopener">播放</a>
+            <a class="btn ghost" :href="s.url" target="_blank" rel="noopener">播放</a>
           </li>
         </ul>
       </section>
-      <p v-else-if="!loading && !error" class="nm-empty">搜一首歌，或点上面的心情按钮让 SYuki 推荐</p>
+      <p v-else-if="!loading && !error" class="empty">搜一首歌，或点上面心情按钮让 SYuki 推荐</p>
     </div>
   </div>
 </template>
@@ -92,153 +88,158 @@ onMounted(() => {
 
 <style scoped>
 .nm-page {
-  position: relative;
-  width: 100%;
   min-height: 100vh;
-  overflow: hidden;
-  color: #eef4fb;
-}
-.nm-bg {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(1100px 560px at 20% 0%, #1b3a6b 0%, #0d1b33 48%, #05080f 100%);
-  z-index: -1;
+  background: #f4f6f8;
+  color: #1c2530;
 }
 .nm-inner {
   max-width: 720px;
   margin: 0 auto;
-  padding: 24px 20px 48px;
+  padding: 24px 20px 56px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
-.nm-head {
+.nm-header {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
-.nm-back {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #cfe3ff;
+.back {
+  background: #fff;
+  border: 1px solid #e3e8ee;
   border-radius: 999px;
   padding: 6px 14px;
   cursor: pointer;
+  color: #33445a;
 }
-.nm-title {
+h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 26px;
   font-weight: 700;
   margin: 0;
-  background: linear-gradient(90deg, #7fd0ff, #b9e6ff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  letter-spacing: 0.5px;
 }
-.nm-sub {
+.ico {
+  width: 24px;
+  height: 24px;
+}
+.sub {
   font-size: 13px;
-  color: #8aa6c9;
+  color: #7c8aa0;
 }
-.nm-search {
+.search {
   display: flex;
   gap: 10px;
 }
-.nm-search input {
+.search input {
   flex: 1;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #fff;
+  border: 1px solid #e3e8ee;
   border-radius: 12px;
-  padding: 11px 14px;
-  color: #eef4fb;
+  padding: 12px 16px;
+  font-size: 15px;
+  color: #1c2530;
   outline: none;
 }
-.nm-search input::placeholder {
-  color: #6f87a8;
+.search input:focus {
+  border-color: #4a90d9;
 }
-.nm-btn,
-.nm-btn-sm {
-  background: linear-gradient(90deg, #2497d9, #44b7fe);
+.btn {
+  background: #4a90d9;
   border: none;
   color: #fff;
   font-weight: 600;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: filter 0.2s;
-}
-.nm-btn {
+  border-radius: 12px;
   padding: 0 22px;
+  cursor: pointer;
 }
-.nm-btn-sm {
-  padding: 6px 13px;
+.btn:disabled {
+  opacity: 0.5;
+}
+.btn.ghost {
+  background: transparent;
+  border: 1px solid #dfe5ec;
+  color: #54708f;
+  padding: 6px 14px;
+  border-radius: 999px;
   font-size: 13px;
   text-decoration: none;
 }
-.nm-btn:disabled,
-.nm-btn-sm:disabled {
-  filter: grayscale(0.5);
-  opacity: 0.6;
-}
-.nm-moods {
+.moods {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
-.nm-mood-label {
-  color: #9cc4ee;
+.mood-label {
+  color: #7c8aa0;
   font-size: 13px;
 }
-.nm-error {
-  color: #ff9aa0;
+.pill {
+  background: #fff;
+  border: 1px solid #e3e8ee;
+  color: #42536b;
+  border-radius: 999px;
+  padding: 6px 15px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pill:hover {
+  border-color: #4a90d9;
+  color: #2b6bb0;
+}
+.pill:disabled {
+  opacity: 0.5;
+}
+.err {
+  color: #d9534f;
   font-size: 14px;
 }
-.nm-empty {
-  color: #6f87a8;
+.empty {
+  color: #9aa7b8;
   font-size: 13px;
 }
-.nm-card {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 18px;
-  padding: 14px 16px;
-  backdrop-filter: blur(10px);
+.panel {
+  background: #fff;
+  border: 1px solid #e8edf3;
+  border-radius: 16px;
+  padding: 10px 16px;
 }
-.nm-list {
+.song-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
 }
-.nm-item {
+.song-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 12px;
-  padding: 10px 12px;
+  padding: 10px 2px;
+  border-bottom: 1px solid #f0f3f7;
 }
-.nm-row-main {
-  flex: 1;
-  min-width: 0;
+.song-row:last-child {
+  border-bottom: none;
 }
-.nm-row-title {
+.t {
   font-size: 15px;
   font-weight: 600;
-  color: #eef4fb;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: #1c2530;
 }
-.nm-artist {
-  color: #9cc4ee;
-  font-size: 13px;
+.soft {
+  color: #8a97a9;
   font-weight: 400;
+  font-size: 13px;
 }
-.nm-row-meta {
+.m {
   font-size: 12px;
-  color: #8aa6c9;
+  color: #8a97a9;
   margin-top: 3px;
 }
 </style>

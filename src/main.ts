@@ -1,3 +1,4 @@
+import "./web-mock";
 import { createApp } from "vue";
 import pinia from "./stores";
 import { initializeEventProcessors } from "./core/events";
