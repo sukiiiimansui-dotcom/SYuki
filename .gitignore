@@ -180,3 +180,14 @@ AGENTS.md
 # 本地 APK build 路径
 prev-build-*/
 
+
+# ===== SYuki 素材打包修复 =====
+# 以下内容用于打进 data.7z 分发给用户（官方 LingChat 素材/模型），
+# 属于「运行时素材」而非开发中间物，必须被 git 追踪才能进 CI 打包产物。
+# 放行 data/ 下的 onnx/模型/manifest 等，抵消上面的 *.onnx/*.data/.json 阻挡。
+!data/third_party/**
+!data/**/*.onnx
+!data/**/*.data
+!data/**/*.safetensors
+!data/data_manifest.json
+!data/**/emotion_labels.csv
