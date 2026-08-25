@@ -195,3 +195,15 @@ prev-build-*/
 # 临时打包构建目录（脚本生成，勿追踪）
 src-tauri/.bundled_build/
 src-tauri/gen/android/app/src/main/assets/
+
+# ===== SYuki 主界面前端素材修复 =====
+# 官方用 Git LFS 存这些素材；本 fork 走普通文件 + 下述放行，让 CI clone 到真实字节。
+# 放行主界面素材/字体/图标，抵消上面的 *.png / *.jpg / *.ico 等全局忽略。
+!src/assets/images/*
+!src/assets/images/**/
+!public/fonts/*
+!public/pictures/**
+!public/audio/**
+!public/audio_effects/**
+!src-tauri/icons/*
+!src-tauri/icons/**/
