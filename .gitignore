@@ -191,3 +191,7 @@ prev-build-*/
 !data/**/*.safetensors
 !data/data_manifest.json
 !data/**/emotion_labels.csv
+
+# 临时打包构建目录（脚本生成，勿追踪）
+src-tauri/.bundled_build/
+src-tauri/gen/android/app/src/main/assets/
