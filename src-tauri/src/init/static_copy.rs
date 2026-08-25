@@ -83,7 +83,9 @@ pub fn seed_data_dir(app: &tauri::AppHandle) -> anyhow::Result<()> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let manifest = data_dir.join("data_manifest.json");
-        if seeded.exists() && manifest.exists() {
+        // 只有「已播种 且 素材关键目录实际上有内容」才跳过，避免旧版残留的
+        // .seeded 标记让升级安装不重新解压（否则的新 data.7z 素材永远不会落盘）。
+        if seeded.exists() && manifest.exists() && seeded_data_present(&data_dir) {
             return Ok(());
         }
         let _ = std::fs::remove_file(&seeded);
@@ -129,6 +131,32 @@ fn seed_desktop(
     // seeded 存在 + official 存在 → 更新待处理，不自动操作
 
     Ok(())
+}
+
+/// 检查 data_dir 下是否已有实质素材内容（game_data 关键子目录有文件）。
+///
+/// 用于移动端 seed 判断：旧版可能已写 .seeded 标记但素材目录是空的
+/// （例如 data.7z 为 38KB 空壳时导出的旧数据），升级后需强制重新解压。
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn seeded_data_present(data_dir: &std::path::Path) -> bool {
+    // game_data 下关键子目录，任何一个含有实际文件就认为素材已落盘。
+    const CHECK_DIRS: &[&str] = &["characters", "backgrounds", "musics", "scripts"];
+    let game_data = data_dir.join("game_data");
+    if !game_data.is_dir() {
+        return false;
+    }
+    for sub in CHECK_DIRS {
+        let dir = game_data.join(sub);
+        if !dir.is_dir() {
+            continue;
+        }
+        if let Ok(mut it) = std::fs::read_dir(&dir) {
+            if it.next().is_some() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// 通过 tauri-plugin-fs 读取打包的 data.7z 并解压到 data_dir。
