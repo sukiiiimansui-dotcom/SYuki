@@ -1,5 +1,9 @@
 <template>
   <router-view />
+
+  <!-- 网易云全局播放条：切页/玩游戏都持续播放，独立于游戏BGM -->
+  <NetMusicPlayer />
+
   <!-- 将光标特效 teleport 到 body，避免 #app 上的 CSS zoom 导致坐标偏移 -->
   <Teleport to="body">
     <CursorEffects />
@@ -21,6 +25,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import CursorEffects from './components/effects/CursorEffects.vue'
+import NetMusicPlayer from './components/ui/NetMusicPlayer.vue'
 import Notification from './components/ui/Notification.vue'
 import AchievementToast from './components/ui/AchievementToast.vue'
 import AdventureUnlockNotify from './components/ui/AdventureUnlockNotify.vue'
@@ -35,10 +40,14 @@ import { useSedentaryReminder } from './composables/useSedentaryReminder'
 import { useUpdater } from './composables/useUpdater'
 import { useCanDeliver } from './composables/useCanDeliver'
 import { useZoom } from './composables/useZoom'
+import { useHeartbeat } from './composables/useHeartbeat'
 import { listSystemFonts, getImportedFonts, registerAllImportedFonts } from './api/services/font'
 
 // ─── 激活主动对话投放条件上报（仅在此处挂载一次） ────────────
 useCanDeliver()
+
+// 激活用户心跳上报（离开想念触发）
+useHeartbeat()
 
 // 激活 Ctrl+滚轮 UI 全局缩放
 useZoom()

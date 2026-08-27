@@ -80,4 +80,14 @@ pub async fn proactive_set_can_deliver(
     }
     Ok(())
 }
+
+/// 前端心跳上报：用户有交互时刷新"最近活跃"时间，用于唤醒离开想念/心跳触发。
+#[tauri::command]
+pub async fn proactive_mark_active(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    if let Some(ref ps) = state.proactive_system {
+        ps.lock().await.mark_user_active();
+    }
+    Ok(())
+}
 pub mod role_archive;

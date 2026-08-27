@@ -216,6 +216,32 @@ pub fn build_config_tree(app: &AppHandle) -> ConfigTree {
             },
         );
 
+        // 扩展功能（L-SYuki 移植：网易云 / B站学习）
+        feat_subs.insert(
+            "扩展功能".to_string(),
+            Subcategory {
+                description: "L-SYuki 移植的功能开关：网易云音乐、B站学习".to_string(),
+                settings: vec![
+                    ConfigSetting {
+                        key: keys::ENABLE_NETMUSIC.to_string(),
+                        value: read_setting(app, keys::ENABLE_NETMUSIC, "true"),
+                        description:
+                            "ENABLE_NETMUSIC — 启用网易云音乐（搜索/心情推歌/后台播放）"
+                                .to_string(),
+                        setting_type: "bool".to_string(),
+                    },
+                    ConfigSetting {
+                        key: keys::ENABLE_BILIBILI.to_string(),
+                        value: read_setting(app, keys::ENABLE_BILIBILI, "true"),
+                        description:
+                            "ENABLE_BILIBILI — 启用 B站学习（热榜/搜索/学习库/AI 调用）"
+                                .to_string(),
+                        setting_type: "bool".to_string(),
+                    },
+                ],
+            },
+        );
+
         tree.insert(
             "功能设置".to_string(),
             Category {
@@ -555,6 +581,52 @@ pub fn build_config_tree(app: &AppHandle) -> ConfigTree {
                             "ENABLE_IMPORTANT_DAY_REMINDER — 启用重要节日与特殊日子暖心提醒"
                                 .to_string(),
                         setting_type: "bool".to_string(),
+                    },
+                ],
+            },
+        );
+
+        // 离开想念（心跳触发）
+        proactive_subs.insert(
+            "离开想念".to_string(),
+            Subcategory {
+                description: "用户离开一段时间后，AI 主动想念并搭话（心跳触发）".to_string(),
+                settings: vec![
+                    ConfigSetting {
+                        key: keys::ENABLE_AWAY_TRIGGER.to_string(),
+                        value: read_setting(
+                            app,
+                            keys::ENABLE_AWAY_TRIGGER,
+                            &proactive_defaults.enable_away_trigger.to_string(),
+                        ),
+                        description:
+                            "ENABLE_AWAY_TRIGGER — 用户离开后 AI 主动想念/搭话（心跳触发）"
+                                .to_string(),
+                        setting_type: "bool".to_string(),
+                    },
+                    ConfigSetting {
+                        key: keys::AWAY_TIMEOUT_SECS.to_string(),
+                        value: read_setting(
+                            app,
+                            keys::AWAY_TIMEOUT_SECS,
+                            &proactive_defaults.away_timeout_secs.to_string(),
+                        ),
+                        description:
+                            "AWAY_TIMEOUT_SECS — 用户离开多少秒后触发想念（默认 600 秒/10 分钟）"
+                                .to_string(),
+                        setting_type: "text".to_string(),
+                    },
+                    ConfigSetting {
+                        key: keys::AWAY_MAX_TIMES.to_string(),
+                        value: read_setting(
+                            app,
+                            keys::AWAY_MAX_TIMES,
+                            &proactive_defaults.away_max_times.to_string(),
+                        ),
+                        description:
+                            "AWAY_MAX_TIMES — 用户离开期间最多主动搭话几次（默认 3）"
+                                .to_string(),
+                        setting_type: "text".to_string(),
                     },
                 ],
             },

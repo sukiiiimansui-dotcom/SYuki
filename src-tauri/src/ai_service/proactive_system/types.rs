@@ -103,6 +103,7 @@ pub enum IntentType {
     Screen = 1,       // 屏幕感知 — 时效短（2min TTL）
     Todo = 2,         // 待办提醒
     ImportantDay = 3, // 重要日子
+    Miss = 5,         // 用户离开后 AI 想念/主动搭话 — 优先级仅次于日程闹钟
     Alarm = 4,        // 日程闹钟 — 最高优先级，长 TTL（不应过期）
 }
 
@@ -114,6 +115,7 @@ impl IntentType {
             Self::Screen => 120,
             Self::Todo => 600,
             Self::ImportantDay => 600,
+            Self::Miss => 1800,  // 30 分钟，确保想念不会被轻易丢弃
             Self::Alarm => 1800, // 30 分钟，确保不会被轻易丢弃
         }
     }

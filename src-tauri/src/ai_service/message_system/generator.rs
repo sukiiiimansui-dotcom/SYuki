@@ -249,7 +249,51 @@ impl MessageGenerator {
             return Ok(Vec::new());
         };
         let role = gs.get_role(&self.deps.db, rid).await?;
-        Ok(role.memory.clone())
+        let mut memory = role.memory.clone();
+
+        // B站学习上下文注入：把最近学习的B站文化（弹幕梗/高赞评论）作为 system 提示附加，
+        // 让 AI 生成时能基于已学到的 B站网络文化回应（L-SYuki 验收2）。
+        if let Ok(bili_text) = Self::build_bili_context() {
+            if !bili_text.trim().is_empty() {
+                let block = format!(
+                    "\n\n====== 最近学到的 B站文化 ======\n{}\n================================\n",
+                    bili_text.trim()
+                );
+                if let Some(first) = memory.first_mut() {
+                    if first.role == "system" {
+                        first.content = format!("{}{}", first.content, block);
+                    } else {
+                        memory.insert(0, crate::ai_service::types::LlmMessage::system(block.trim_start().to_string()));
+                    }
+                } else {
+                    memory.push(crate::ai_service::types::LlmMessage::system(block.trim_start().to_string()));
+                }
+            }
+        }
+
+        Ok(memory)
+    }
+
+    /// 读取 data/bili_knowledge.json 里最近学习的 B站视频（弹幕梗/高赞评论），格式化为文本。
+    fn build_bili_context() -> Result<String> {
+        let path = crate::api::data_dir().join("bili_knowledge.json");
+        if !path.exists() {
+            return Ok(String::new());
+        }
+        let content = std::fs::read_to_string(&path)?;
+        let videos: Vec<crate::ai_service::bilibili_service::BiliVideo> =
+            serde_json::from_str(&content).unwrap_or_default();
+        let mut out = String::new();
+        for v in videos.iter().take(3) {
+            out.push_str(&format!(
+                "- 《{}》 UP: {} | 弹幕梗: {} | 高赞评论: {}\n",
+                v.title,
+                v.up,
+                if v.repeat_danmaku.is_empty() { "—".to_string() } else { v.repeat_danmaku.clone() },
+                if v.top_comments.is_empty() { "—".to_string() } else { v.top_comments.clone() },
+            ));
+        }
+        Ok(out)
     }
 
     /// Step 3: 启动 LLM 流管道，统一处理 thinking emit 与错误分发。

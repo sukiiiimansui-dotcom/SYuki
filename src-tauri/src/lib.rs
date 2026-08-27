@@ -680,6 +680,7 @@ pub fn run() {
             api::schedule::save_schedules,
             api::schedule::reload_proactive_system,
             api::proactive_set_can_deliver,
+            api::proactive_mark_active,
             api::tool_settings::get_tool_settings,
             api::tool_settings::save_tool_settings,
             api::tool_settings::test_web_search,

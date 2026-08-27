@@ -583,9 +583,27 @@ impl GameRoleManager {
     fn merge_memory_bank_into_context(
         memory: Vec<LlmMessage>,
         system_addendum: &str,
-        _short_term_prefix: &str,
+        short_term_prefix: &str,
     ) -> Vec<LlmMessage> {
         let mut out = memory;
+
+        // 短期回顾：作为 system 前缀注入，让"多记忆层次"真正生效。
+        // 只带当前角色自己的近期回顾（通过 role-level MemoryBank 隔离），避免混入其他角色记忆。
+        let suffix = short_term_prefix.trim();
+        if !suffix.is_empty() {
+            let wrapped = format!("\n\n{}", suffix);
+            if let Some(first) = out.first_mut() {
+                if first.role == "system" {
+                    if !first.content.contains(suffix) {
+                        first.content = format!("{}{}", first.content, wrapped);
+                    }
+                } else {
+                    out.insert(0, LlmMessage::system(wrapped.trim_start().to_string()));
+                }
+            } else {
+                out.push(LlmMessage::system(wrapped.trim_start().to_string()));
+            }
+        }
 
         if !system_addendum.trim().is_empty() {
             if let Some(first) = out.first_mut() {

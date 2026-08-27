@@ -224,6 +224,15 @@ impl StrategyDispatcher {
         ))
     }
 
+    /// 用户离开后 AI 想念/主动搭话的 prompt（心跳触发）。
+    /// 返回 Some(prompt) 表示触发；None 表示当前不满足（此处直接返回 Some）。
+    pub fn get_away_prompt(&self, ai_name: &str, user_name: &str) -> Option<String> {
+        let user = if user_name.trim().is_empty() { "主人" } else { user_name };
+        Some(format!(
+            "{{ {ai_name} 发现自己已经有一段时间没见到 {user} 了，心里有点想你。主动说一句想念的话，自然地关心一下 {user} 现在在做什么、有没有好好休息。语气温柔，一两句话即可，不要长篇大论。 }}"
+        ))
+    }
+
     fn get_topic_prompt(&self, game_status: &GameStatus) -> String {
         let ai_name = game_status
             .current_role_id

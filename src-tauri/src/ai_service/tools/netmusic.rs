@@ -9,6 +9,25 @@ use serde_json::Value;
 use crate::ai_service::netmusic_service::{self, NetMusicSong};
 use crate::ai_service::types::ToolDefinition;
 
+/// 把歌曲列表推给前端全局播放器（AI 发歌 → 前端自动播放）。
+/// 在搜索/推荐工具返回歌曲后触发，让网易云音乐能"不打扰游戏"地后台播放。
+fn emit_play_to_frontend(app: &tauri::AppHandle, songs: &[NetMusicSong]) {
+    // 选择要播的歌：优先第一首；若已在播同一首则不重复触发。
+    let Some(first) = songs.first() else { return };
+    use tauri::Emitter;
+    let payload = serde_json::json!({
+        "title": first.title,
+        "artist": first.artist,
+        "album": first.album,
+        "url": first.url,
+        "cover": first.cover,
+        "duration": first.duration,
+    });
+    if let Err(e) = app.emit("netmusic:play", payload) {
+        tracing::warn!("emit netmusic:play 失败: {e}");
+    }
+}
+
 use super::executor::{Tool, ToolContext, ToolError, ToolResult};
 
 const TIMEOUT: Duration = Duration::from_secs(25);
@@ -77,7 +96,7 @@ impl Tool for NetMusicSearchTool {
         Some(TIMEOUT)
     }
 
-    async fn execute(&self, _: &ToolContext, args: Value) -> Result<ToolResult, ToolError> {
+    async fn execute(&self, context: &ToolContext, args: Value) -> Result<ToolResult, ToolError> {
         let keyword = args
             .get("keyword")
             .and_then(Value::as_str)
@@ -88,6 +107,9 @@ impl Tool for NetMusicSearchTool {
         let client = netmusic_service::build_client().map_err(ToolError::Execution)?;
         let songs = netmusic_service::search_songs(&client, keyword, limit.max(1)).await;
         let text = format_songs(&songs);
+        if let Ok(app) = context.require_app() {
+            emit_play_to_frontend(&app, &songs);
+        }
         Ok(serde_json::json!({ "ok": true, "count": songs.len(), "text": text, "songs": songs }))
     }
 }
@@ -114,7 +136,7 @@ impl Tool for NetMusicRecommendTool {
         Some(TIMEOUT)
     }
 
-    async fn execute(&self, _: &ToolContext, args: Value) -> Result<ToolResult, ToolError> {
+    async fn execute(&self, context: &ToolContext, args: Value) -> Result<ToolResult, ToolError> {
         let mood = args
             .get("mood")
             .and_then(Value::as_str)
@@ -125,6 +147,9 @@ impl Tool for NetMusicRecommendTool {
         let client = netmusic_service::build_client().map_err(ToolError::Execution)?;
         let songs = netmusic_service::recommend(&client, &mood, limit.max(1)).await;
         let text = format_songs(&songs);
+        if let Ok(app) = context.require_app() {
+            emit_play_to_frontend(&app, &songs);
+        }
         Ok(serde_json::json!({ "ok": true, "count": songs.len(), "text": text, "songs": songs }))
     }
 }

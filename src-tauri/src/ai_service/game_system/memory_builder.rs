@@ -272,3 +272,71 @@ impl MemoryBuilder {
         memory
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai_service::types::LineAttributeExt;
+    use crate::db::entities::line::LineAttribute;
+
+    fn user_line(role: i32, name: &str, content: &str) -> GameLine {
+        let base = LineBase {
+            content: content.to_string(),
+            attribute: LineAttributeExt(LineAttribute::User),
+            sender_role_id: Some(role),
+            display_name: Some(name.to_string()),
+            ..Default::default()
+        };
+        GameLine::from_base(base, vec![])
+    }
+
+    fn ai_line(role: i32, name: &str, content: &str) -> GameLine {
+        let base = LineBase {
+            content: content.to_string(),
+            attribute: LineAttributeExt(LineAttribute::Assistant),
+            sender_role_id: Some(role),
+            display_name: Some(name.to_string()),
+            ..Default::default()
+        };
+        GameLine::from_base(base, vec![])
+    }
+
+    /// 核心验收：角色 A 与角色 B 各自构建出的 memory 只包含"该角色看得到"的台词，
+    /// 不会把另一角色的私人对话误读成自己的记忆（多记忆、AI 不记混）。
+    #[test]
+    fn memory_per_role_is_isolated() {
+        // 一场谁都能看到的公开对话：用户 0 -> AI 1 问好
+        let public_user = user_line(0, "用户", "你好呀");
+        let public_ai = ai_line(1, "玲玲", "你好呀，今天想做什么？");
+
+        // 一场只有 角色 2 私下说的台词（角色 1 不该看到）
+        let private_2 = ai_line(2, "黑雪", "（小声）主人又在和玲玲聊天，真烦。");
+
+        let lines = vec![public_user, public_ai, private_2];
+
+        // 角色 1 视角：只应看到 user + 自己，不应看到黑雪的悄悄话
+        let m1 = MemoryBuilder::new(1).build(&lines);
+        let text1: String = m1.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n");
+        assert!(
+            text1.contains("你好呀，今天想做什么？"),
+            "角色1应看到自己的台词"
+        );
+        assert!(
+            !text1.contains("真烦"),
+            "角色1不应看到角色2的私聊（不记混）"
+        );
+        let text1_lower = text1.to_lowercase();
+        assert!(
+            !text1_lower.contains("黑雪"),
+            "角色1视角不应包含黑雪的名字"
+        );
+
+        // 角色 2 视角：应看到黑雪自己的台词（含"主人又在"）
+        let m2 = MemoryBuilder::new(2).build(&lines);
+        let text2: String = m2.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n");
+        assert!(
+            text2.contains("真烦"),
+            "角色2应看到自己的台词"
+        );
+    }
+}

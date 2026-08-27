@@ -112,6 +112,7 @@ class MouseSpark {
       this.isDown = true
       this.lastPos = getPos(e)
       this.createEffects(this.lastPos.x, this.lastPos.y)
+      this.startIfNeeded()
     }
     this.onMouseMove = (e: MouseEvent) => {
       if (!settingsStore.globalMouseTrailEnabled) return
@@ -131,6 +132,7 @@ class MouseSpark {
       this.lastMouseTime = now
 
       if (dist(p, prev) > 2) {
+        this.startIfNeeded()
         this.trail.push({ x: p.x, y: p.y, alpha: 1.0 })
         if (this.trail.length > this.maxTrail * 1.5) {
           this.trail.splice(0, this.trail.length - this.maxTrail)
@@ -664,6 +666,14 @@ class MouseSpark {
     }
   }
 
+  startIfNeeded() {
+    if (this.animationId == null) {
+      this.lastDrawTime = 0
+      this.lastFrameTime = performance.now()
+      this.animationId = requestAnimationFrame((now) => this.animationLoops(now))
+    }
+  }
+
   animationLoops(now: number) {
     if (now - this.lastDrawTime < this.frameInterval) {
       this.animationId = requestAnimationFrame((nextNow) => this.animationLoops(nextNow))
@@ -680,7 +690,12 @@ class MouseSpark {
         this._renderToMain(this.previousDirtyRects)
         this.previousDirtyRects = []
       }
-      this.animationId = requestAnimationFrame((nextNow) => this.animationLoops(nextNow))
+      // 性能优化：特效已全部清空时停掉 rAF 循环（避免无特效时空转 60fps）。
+      // 新的鼠标特效触发时经 startIfNeeded() 重新启动。
+      if (this.animationId) {
+        cancelAnimationFrame(this.animationId)
+        this.animationId = null
+      }
       return
     }
 

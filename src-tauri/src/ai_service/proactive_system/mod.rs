@@ -10,7 +10,7 @@ pub mod visual_monitor;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 
@@ -58,6 +58,11 @@ pub struct ProactiveSystem {
     can_deliver: bool,
     /// 暂存的主动对话意图（"小本本"）。每轮 cycle 开头尝试投放。
     pending_intents: Vec<PendingIntent>,
+
+    /// 最近一次用户交互时间（心跳）。用户发消息/前端心跳上报时刷新。
+    last_user_interaction: std::time::Instant,
+    /// 当前"离开期间"已投放的想念次数，用于 away_max_times 上限。
+    away_delivered_count: i32,
 }
 
 impl ProactiveSystem {
@@ -94,6 +99,8 @@ impl ProactiveSystem {
             is_running: false,
             can_deliver: false,
             pending_intents: Vec::new(),
+            last_user_interaction: std::time::Instant::now(),
+            away_delivered_count: 0,
         };
 
         system
@@ -206,6 +213,13 @@ impl ProactiveSystem {
     pub async fn on_user_message_received(&mut self) {
         tracing::info!("[ProactiveSystem] User message received! Restoring engagement cap.");
         self.interest_manager.restore_max_interest_cap();
+        self.mark_user_active();
+    }
+
+    /// 刷新最近用户交互时间（心跳）。用户在聊天界面交互时由前端上报。
+    pub fn mark_user_active(&mut self) {
+        self.last_user_interaction = std::time::Instant::now();
+        self.away_delivered_count = 0;
     }
 
     /// 前端通知后端当前是否具备投放条件。
@@ -243,6 +257,12 @@ impl ProactiveSystem {
                 let gen = gs.lock().await.preview_generation;
                 (gs, gen)
             };
+            // 从 AppState 获取上帝 Agent，让主动/心跳对话也能走多角色自主接话编排。
+            let god_agent = self
+                .app
+                .state::<crate::AppState>()
+                .god_agent
+                .clone();
             let deps = GeneratorDeps {
                 source: GeneratorSource::Proactive,
                 app: self.app.clone(),
@@ -255,7 +275,7 @@ impl ProactiveSystem {
                     .ok_or_else(|| anyhow::anyhow!("LLM is not configured"))?,
                 tool_registry: self.tool_registry.clone(),
                 concurrency: 1,
-                god_agent: None,
+                god_agent,
                 suppress_thinking: false,
                 // 捕获当前试玩代号（自由对话恒等，行为不变）
                 generation: preview_generation,
@@ -376,6 +396,44 @@ impl ProactiveSystem {
 
         // ─── 2. 感知（提前到这里，供 Alarm 的 evaluate 使用）───
         let perception = sys.activity_monitor.get_user_status();
+
+        // ─── 2.5 离开想念（心跳触发）：用户离开超时 → AI 主动想念搭话 ───
+        if sys.config.enable_away_trigger
+            && sys.away_delivered_count < sys.config.away_max_times
+            && sys.last_user_interaction.elapsed().as_secs() >= sys.config.away_timeout_secs as u64
+        {
+            // 只有用户不在聊天界面时投放心跳模式才合理；若用户正在聊天，视为在线，重置计时。
+            if sys.can_deliver {
+                sys.mark_user_active();
+            } else {
+                // 生成想念 prompt（用户离开）。
+                let (ai_name, user_name) = {
+                    let svc = sys.ai_service.lock().await;
+                    let gs = svc.game_status.lock().await;
+                    let ai_name = gs
+                        .current_role_id
+                        .and_then(|rid| gs.role_manager.get_loaded(rid))
+                        .and_then(|r| r.display_name.clone())
+                        .unwrap_or_else(|| "我".to_string());
+                    (ai_name, gs.player.user_name.clone())
+                };
+                let away_prompt =
+                    sys.strategy_dispatcher.get_away_prompt(&ai_name, &user_name);
+                if let Some(prompt) = away_prompt {
+                    let formatted = PromptRole::System.build_prompt(&prompt);
+                    if sys.generation_lock.try_lock().is_ok() {
+                        sys.away_delivered_count += 1;
+                        tracing::info!(
+                            "[ProactiveSystem] Away trigger fired (elapsed {}s, delivered {}), delivering miss...",
+                            sys.last_user_interaction.elapsed().as_secs(),
+                            sys.away_delivered_count,
+                        );
+                        sys.deliver(formatted).await?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
 
         // ─── 3. 日程警报（跳过兴趣累积，但走 evaluate 闸门）───
         if sys.config.enable_schedule_reminder {

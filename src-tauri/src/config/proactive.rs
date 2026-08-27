@@ -20,6 +20,12 @@ pub struct ProactiveConfig {
     pub todo_weight: f64,
     pub enable_schedule_reminder: bool,
     pub enable_important_day_reminder: bool,
+    /// 用户离开后 AI 想念/主动搭话 开关（心跳触发）。
+    pub enable_away_trigger: bool,
+    /// 用户离开多少秒后触发想念（默认 10 分钟）。
+    pub away_timeout_secs: u32,
+    /// 用户离开期间最多主动搭话次数（避免刷屏）。
+    pub away_max_times: i32,
 }
 
 // ========== Default 实现（单一真相源） ==========
@@ -37,6 +43,9 @@ impl Default for ProactiveConfig {
             todo_weight: 10.0,
             enable_schedule_reminder: true,
             enable_important_day_reminder: true,
+            enable_away_trigger: true,
+            away_timeout_secs: 600,
+            away_max_times: 3,
         }
     }
 }
@@ -114,6 +123,13 @@ impl ProactiveConfig {
                 keys::ENABLE_IMPORTANT_DAY_REMINDER,
                 default.enable_important_day_reminder,
             ),
+            enable_away_trigger: get_bool(
+                keys::ENABLE_AWAY_TRIGGER,
+                default.enable_away_trigger,
+            ),
+            away_timeout_secs: get_i32(keys::AWAY_TIMEOUT_SECS, default.away_timeout_secs as i32)
+                .max(0) as u32,
+            away_max_times: get_i32(keys::AWAY_MAX_TIMES, default.away_max_times),
         }
     }
 }

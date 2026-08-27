@@ -39,6 +39,8 @@ pub const ENABLE_EMOTION_CLASSIFIER: &str = "features.enable_emotion_classifier"
 
 // ========== 功能开关（记忆系统） ==========
 pub const USE_PERSISTENT_MEMORY: &str = "features.use_persistent_memory";
+pub const ENABLE_NETMUSIC: &str = "features.enable_netmusic";
+pub const ENABLE_BILIBILI: &str = "features.enable_bilibili";
 pub const MEMORY_UPDATE_INTERVAL: &str = "features.memory_update_interval";
 pub const MEMORY_RECENT_WINDOW: &str = "features.memory_recent_window";
 
@@ -85,6 +87,9 @@ pub const ENABLE_TODO_PRECEPTION: &str = "ENABLE_TODO_PRECEPTION";
 pub const TODO_WEIGHT: &str = "TODO_WEIGHT";
 pub const ENABLE_SCHEDULE_REMINDER: &str = "ENABLE_SCHEDULE_REMINDER";
 pub const ENABLE_IMPORTANT_DAY_REMINDER: &str = "ENABLE_IMPORTANT_DAY_REMINDER";
+pub const ENABLE_AWAY_TRIGGER: &str = "ENABLE_AWAY_TRIGGER";
+pub const AWAY_TIMEOUT_SECS: &str = "AWAY_TIMEOUT_SECS";
+pub const AWAY_MAX_TIMES: &str = "AWAY_MAX_TIMES";
 
 // ========== 上帝 Agent（God Agent）多人对话 ==========
 pub const GOD_AGENT_MAX_CONSECUTIVE_NPC: &str = "god_agent.max_consecutive_npc";

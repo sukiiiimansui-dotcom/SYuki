@@ -79,6 +79,9 @@ const loadConfig = async () => {
     'TODO_WEIGHT',
     'ENABLE_SCHEDULE_REMINDER',
     'ENABLE_IMPORTANT_DAY_REMINDER',
+    'ENABLE_AWAY_TRIGGER',
+    'AWAY_TIMEOUT_SECS',
+    'AWAY_MAX_TIMES',
   ]
 
   for (const key of configKeys) {

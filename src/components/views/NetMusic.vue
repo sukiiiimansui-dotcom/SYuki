@@ -27,7 +27,7 @@
               <div class="t">{{ s.title }}<span class="soft"> · {{ s.artist }}</span></div>
               <div class="m">{{ s.album }} · {{ fmt(s.duration) }}</div>
             </div>
-            <a class="btn ghost" :href="s.url" target="_blank" rel="noopener">播放</a>
+            <button class="btn ghost" :class="{ 'playing': playingUrl === s.url }" @click="playSong(s)">播放</button>
           </li>
         </ul>
       </section>
@@ -37,12 +37,19 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { netmusicRecommend, netmusicSearch } from '@/api/services/netmusic'
 import type { NetMusicSong } from '@/api/services/netmusic'
+import { useNetmusicStore } from '@/stores/modules/netmusic'
 
 const router = useRouter()
+const netmusicStore = useNetmusicStore()
+const playingUrl = computed(() => netmusicStore.current?.url || '')
+
+function playSong(s: NetMusicSong) {
+  netmusicStore.playSong(s)
+}
 const keyword = ref('')
 const songs = ref<NetMusicSong[]>([])
 const loading = ref(false)
