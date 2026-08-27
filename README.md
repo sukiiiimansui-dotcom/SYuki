@@ -119,12 +119,25 @@ pnpm tauri android build --target aarch64     # 构建 arm64 APK
 
 ## 📦 仓库结构
 
+> **源代码区分**：本仓库主体是 **L-SYuki 改造版**；原版上游 LingChat 的说明归置在 `upstream/`。
+
+### 🧩 原版 vs 改造版
+
+| 路径 | 说明 |
+|---|---|
+| **`upstream/`** | 原版上游 LingChat → 来源说明 / 许可参考（见 `upstream/README.md`） |
+| **代码区（本仓库）** | 下图中的 `src/`、`src-tauri/` 等，即 **L-SYuki 改造版** |
+
+### 📁 目录
+
 ```
-src/              Vue3 前端（界面 / 视图 / 组件 / store）
-src-tauri/        Rust 后端（Tauri 2，RustPython 插件沙箱）
-src-tauri/src/ai_service/   核心：记忆 / 主动 / 工具 / TTS / 剧本引擎
-data/game_data/  角色卡 / 剧本 / 资源
-scripts/         构建脚本（prepare-bundled-resources 等）
+upstream/         原版上游 LingChat（来源标识 / 许可参考）
+
+src/              Vue3 前端（界面 / 视图 / 组件 / store）        ← L-SYuki
+src-tauri/        Rust 后端（Tauri 2，RustPython 插件沙箱）      ← L-SYuki
+src-tauri/src/ai_service/   核心：记忆 / 主动 / 工具 / TTS / 剧本引擎  ← L-SYuki
+data/game_data/  角色卡 / 剧本 / 资源                           ← L-SYuki
+scripts/         构建脚本（prepare-bundled-resources 等）        ← L-SYuki
 docs/            文档与资产
 ```
 
