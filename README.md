@@ -158,3 +158,11 @@ docs/            文档与资产
 **L-SYuki · 一个会记着你、会想你、会陪你学习的 AI 陪伴。**
 
 </div>
+
+
+---
+
+## 📚 相关文档
+
+- [SYuki 源项目 · 具体功能说明](docs/SYuki-original-features.md) —— 改造前的原 SYuki 全部功能
+- [L-SYuki · 我们改了什么](docs/L-SYuki-changes.md) —— SYuki → L-SYuki 迁移对照与本仓库改动详解
