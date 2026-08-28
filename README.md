@@ -149,7 +149,12 @@ docs/            文档与资产
 
 ## 📝 License
 
-本项目基于上游 LingChat，遵循其 LICENSE（见 `LICENSE`）。
+本项目是上游 [LingChat](https://github.com/SlimeBoyOwO/LingChat) 的**衍生改造版**，遵循其开源许可：
+
+- **许可证**：**GNU Affero General Public License v3.0（AGPL-3.0）**（完整文本见 [`LICENSE`](LICENSE)）
+- **署名与修改说明**：见 [`NOTICE`](NOTICE)（Copyright © SlimeBoyOwO；本仓库为 L-SYuki 改造版，修改项见 [`docs/L-SYuki-changes.md`](docs/L-SYuki-changes.md)）
+- **源码区分**：原版上游说明见 [`upstream/`](upstream/)，本仓库代码区（src / src-tauri / data）为 L-SYuki 改造版
+
 
 ---
 

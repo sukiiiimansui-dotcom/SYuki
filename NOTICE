@@ -1,0 +1,49 @@
+# NOTICE
+
+This project is a **derivative work** based on:
+
+- **LingChat** — https://github.com/SlimeBoyOwO/LingChat
+  - Copyright © SlimeBoyOwO
+  - Licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**
+  - (see the upstream [LICENSE](LICENSE) for the original license text)
+
+This repository (`sukiiiimansui-dotcom/SYuki`) is the **L-SYuki** fork / modification
+of LingChat. It is distributed under the **GNU Affero General Public License v3.0**
+(AGPL-3.0), consistent with the upstream license.
+
+---
+
+## What was modified
+
+This fork injects **SYuki's** differentiated features into the LingChat architecture.
+Key changes (relative to upstream LingChat):
+
+- 🧠 **Layered memory system (L1-L4)** — per-role isolated memory bank, auto-compressing
+  short-term / long-term / user profile / promises (AI doesn't mix up memories across roles).
+- 🎵 **NetEase Cloud Music** — search / mood-based recommendation / **app-level global
+  background playback** (keeps playing across pages & during gameplay, independent volume),
+  with AI "send-song → auto-play" bridging.
+- 📺 **Bilibili learning** — provides Bilibili internet culture to the AI (hot list / search /
+  danmaku memes / top-comments knowledge base), AI can autonomously search & call tools.
+- 💗 **Proactive + heartbeat system** — when the user leaves, the AI proactively chats
+  ("missing you"), and can run multi-role autonomous dialogue via the god agent.
+- 🌐 **AI tool system** — search / weather / music etc., configurable via the settings panel.
+- 🎭 **Persona refinement** — refined the character `system_prompt` (dedup / less off-topic /
+  more human-like) and a more natural dialogue example.
+- ⚡ **Performance** — fixed the `CursorEffects` idle `requestAnimationFrame` spin-loop.
+
+See [docs/L-SYuki-changes.md](docs/L-SYuki-changes.md) for the detailed change log.
+
+---
+
+## License
+
+- The **upstream LingChat** code remains © **SlimeBoyOwO**, licensed under AGPL-3.0.
+- **Our modifications** to this project are also licensed under the **GNU Affero General
+  Public License v3.0 (AGPL-3.0)**, so that the combined work remains AGPL-3.0 compatible.
+- The full license text is in the repository root [`LICENSE`](LICENSE).
+
+**You are free to use / modify / distribute this project under the AGPL-3.0 terms**:
+- Redistribution of source or binary must retain this notice and the AGPL-3.0 license.
+- Source code must be made available (this repository is public).
+- Modifications must be clearly identified (see "What was modified" above).
