@@ -142,6 +142,13 @@ jobs:
             echo "未找到 APK 文件，跳过重命名"
           fi
 
+      - name: 上传 APK 产物（未签名，用于本地/手动签名）
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+
       - name: 手动签名 APK
         run: |
           VERSION="${{ github.event.inputs.tag_name }}"
