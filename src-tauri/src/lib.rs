@@ -283,6 +283,9 @@ pub fn run() {
                 utils::file_logger::init_logging(data_dir, log_enable);
                 utils::file_logger::cleanup_old_logs(retention_days);
 
+                // 初始化心跳/主动专用日志（跟随应用日志开关）
+                utils::heartbeat_logger::init(data_dir, log_enable);
+
                 // 初始化 LLM 请求体日志（默认关闭）
                 let llm_request_log_enable = store
                     .as_ref()
@@ -595,6 +598,7 @@ pub fn run() {
             api::netmusic::netmusic_recommend,
             api::netmusic::netmusic_url,
             api::locale::get_locale_messages,
+            api::memory::get_role_memory_bank,
             api::ambient::get_ambient_list,
             api::ambient::upload_ambient,
             api::ambient::delete_ambient,
@@ -681,6 +685,7 @@ pub fn run() {
             api::schedule::reload_proactive_system,
             api::proactive_set_can_deliver,
             api::proactive_mark_active,
+            api::get_proactive_status,
             api::tool_settings::get_tool_settings,
             api::tool_settings::save_tool_settings,
             api::tool_settings::test_web_search,

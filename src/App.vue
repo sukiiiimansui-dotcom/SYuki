@@ -16,10 +16,17 @@
   <AchievementToast v-if="isMainWindow" />
   <AdventureUnlockNotify v-if="isMainWindow" />
   <AppDialog v-if="isMainWindow" />
+
+  <!-- 记忆增强：悬浮小窗 + 全局触发按钮 -->
+  <MemoryFloatingWidget />
+  <button v-if="memBtnVisible" class="mem-fab" @click="toggleMemWidget">
+    <span class="mem-fab-ico">🧠</span>
+    <span class="mem-fab-txt">记忆</span>
+  </button>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { listen } from '@tauri-apps/api/event'
@@ -30,6 +37,8 @@ import Notification from './components/ui/Notification.vue'
 import AchievementToast from './components/ui/AchievementToast.vue'
 import AdventureUnlockNotify from './components/ui/AdventureUnlockNotify.vue'
 import AppDialog from './components/ui/AppDialog.vue'
+import MemoryFloatingWidget from './components/views/MemoryFloatingWidget.vue'
+import { useMemoryWidget } from './composables/useMemoryWidget'
 import { initUIStore } from './stores/modules/ui/ui'
 import { i18n } from './locales'
 import { useSettingsStore } from './stores/modules/settings'
@@ -104,6 +113,9 @@ const handleKeyDown = async (event: KeyboardEvent) => {
 }
 
 // ─── 关闭确认 ────────────────────────────────────────────────
+
+const { open: memOpen, toggle: toggleMemWidget } = useMemoryWidget()
+const memBtnVisible = computed(() => isMainWindow && !memOpen.value)
 
 const dialogStore = useDialogStore()
 let saveCompleted = false
@@ -208,5 +220,31 @@ html {
 #app {
   width: 100vw;
   height: 100vh;
+  /* 手机上横屏/小屏内容超出一屏时允许滚动（body/html 保持 overflow:hidden，
+     由 #app 承担滚动，避免全屏页(如 B站/网易云/记忆)被裁剪而“划不动”） */
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
 }
+.mem-fab {
+  position: fixed;
+  right: 16px;
+  bottom: 24px;
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(122,162,247,.4);
+  background: rgba(18,26,38,.82);
+  color: #e8f0fb;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 20px rgba(0,0,0,.4);
+}
+.mem-fab-ico { font-size: 16px; }
+.mem-fab:hover { background: rgba(122,162,247,.2); }
 </style>

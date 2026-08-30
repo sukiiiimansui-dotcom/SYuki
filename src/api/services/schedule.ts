@@ -34,3 +34,44 @@ export const reloadProactiveSystem = async (): Promise<void> => {
     throw error
   }
 }
+
+// ========== 主动系统状态快照（前端可视化「AI 主动状态与历史」） ==========
+
+export interface ProactivePendingIntent {
+  kind: string
+  waited_secs: number
+}
+
+export interface ProactiveEvent {
+  ts_ms: number
+  kind: string
+  preview: string
+}
+
+export interface ProactiveStatusSnapshot {
+  enabled: boolean
+  running: boolean
+  can_deliver: boolean
+  last_interaction_ago_secs: number
+  away_delivered_count: number
+  away_max_times: number
+  away_timeout_secs: number
+  interest: number
+  interest_cap: number
+  proactive_times: number
+  max_proactive_count: number
+  state: string
+  description: string
+  pending_intents: ProactivePendingIntent[]
+  history: ProactiveEvent[]
+}
+
+export const getProactiveStatus = async (): Promise<ProactiveStatusSnapshot> => {
+  try {
+    const data = await invoke<ProactiveStatusSnapshot>('get_proactive_status')
+    return data
+  } catch (error: any) {
+    console.error('获取主动系统状态错误:', error?.message || error)
+    throw error
+  }
+}

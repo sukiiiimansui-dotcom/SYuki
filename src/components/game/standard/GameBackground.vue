@@ -163,7 +163,8 @@ const soundEffectPlayer = ref<HTMLAudioElement | null>(null)
 
 // 星空效果控制
 const starfieldEnabled = ref<boolean>(true)
-const starCount = ref<number>(200)
+// 手机/低性能更轻：降低星尘数量
+const starCount = ref<number>(110)
 const scrollSpeed = ref<number>(0.4)
 const starColors = ref<string[]>([
   'rgb(173, 216, 230)',

@@ -36,6 +36,72 @@ function mockResult(cmd: string): any {
     },
   ]
   if (c.includes('netmusic_url')) return 'https://music.163.com/song/media/outer/url?id=1.mp3'
+  // —— CPU 检测：浏览器预览强制「最省性能」，让自动配置关闭高开销特效 ——
+  if (c.includes('get_cpu_info') || c.includes('redetect_cpu')) return {
+    brand: 'Snapdragon (mock / web preview)',
+    tier: 'Internet',
+    is_unknown: false,
+    unknown_message: null,
+  }
+  // —— 记忆可视化面板 ——
+  if (c.includes('get_role_memory_bank')) return {
+    role_id: 1,
+    role_name: '示例角色',
+    memory_enabled: true,
+    schema_version: 1,
+    updated_at: '2026-08-28 13:00:00',
+    short_term: [
+      '刚刚在聊「天气」和「周末计划」，用户提到明天想去看海，心情不错。',
+      '话题还没结束，可以接着问他要不要带相机。',
+      '用户说最近晚上总失眠，想早点睡。',
+      '上一条对话里用户分享了看到的一只流浪猫，想收养。',
+      '今晚用户想吃火锅，问我能不能陪。',
+    ].join('\n'),
+    long_term: [
+      '用户上周分享了第一次去咖啡馆做手冲的经历，说想以后自己学。',
+      '用户养过一只叫「牛奶」的猫，三年前走丢了，一直记得。',
+      '用户曾在海边城市读书，喜欢看日落。',
+      '用户提过想换一份能远程的工作，好到处旅行。',
+      '第一次见面时用户穿蓝色外套，聊了很多星座话题。',
+    ].join('\n'),
+    user_info: [
+      '用户昵称：示例。喜欢猫、咖啡、深夜听歌。',
+      '性格比较慢热，但熟悉后话很多。',
+      '怕吵、怕辣、对海鲜过敏。',
+      '最近在学手冲咖啡，也偶尔玩摄影。',
+      '熬夜党，作息不大规律，想改。',
+    ].join('\n'),
+    promises: [
+      '本周内一起尝试做一次手冲咖啡。',
+      '约好下个月一起去海边看日落。',
+      '答应帮他留意工作机会。',
+      '约定了互相监督早睡。',
+      '说好下次带猫粮去看那只流浪猫。',
+    ].join('\n'),
+  }
+  // —— 主动/心跳「想念」状态与历史 ——
+  if (c.includes('get_proactive_status')) return {
+    enabled: true,
+    running: true,
+    can_deliver: true,
+    last_interaction_ago_secs: 132,
+    away_delivered_count: 1,
+    away_max_times: 3,
+    away_timeout_secs: 600,
+    interest: 32.5,
+    interest_cap: 50,
+    proactive_times: 1,
+    max_proactive_count: 3,
+    state: 'IDLE',
+    description: '用户似乎离开了，最近没有交互。',
+    pending_intents: [
+      { kind: 'todo', waited_secs: 45 },
+    ],
+    history: [
+      { ts_ms: Date.now() - 132000, kind: 'miss', preview: '（示例）已经有一阵子没说话啦，有点想你…你在忙什么呀？' },
+      { ts_ms: Date.now() - 900000, kind: 'alarm', preview: '（示例）提醒：我们约好的手冲时间快到啦。' },
+    ],
+  }
   // —— 其它初始化为安全空值 ——
   if (c.includes('font') || c.includes('llm') || c.includes('provider') || c.includes('settings')
     || c.includes('character') || c.includes('background') || c.includes('scene')

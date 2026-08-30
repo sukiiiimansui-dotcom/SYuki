@@ -12,7 +12,7 @@ const props = defineProps({
   },
   starCount: {
     type: Number,
-    default: 200,
+    default: 110,
   },
   scrollSpeed: {
     type: Number,
@@ -59,7 +59,8 @@ class StarFieldRenderer {
     this.w = 0
     this.h = 0
 
-    this.fpsLimit = 30 // 限制为30fps
+    // 低性能更省：限制帧率（手机端降档）
+    this.fpsLimit = window.innerWidth < 900 ? 24 : 30
     this.lastFrameTime = 0
     this.frameInterval = 1000 / this.fpsLimit
 

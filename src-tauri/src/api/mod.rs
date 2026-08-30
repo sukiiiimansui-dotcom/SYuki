@@ -9,6 +9,7 @@ pub mod chat;
 pub mod font;
 pub mod game;
 pub mod locale;
+pub mod memory;
 pub mod music;
 pub mod netmusic;
 pub mod pet;
@@ -89,5 +90,17 @@ pub async fn proactive_mark_active(app: tauri::AppHandle) -> Result<(), String> 
         ps.lock().await.mark_user_active();
     }
     Ok(())
+}
+
+/// 读取主动对话系统的运行时状态快照（含已投放的主动历史），供前端可视化。
+#[tauri::command]
+pub async fn get_proactive_status(
+    app: tauri::AppHandle,
+) -> Result<crate::ai_service::proactive_system::types::ProactiveStatusSnapshot, String> {
+    let state = app.state::<AppState>();
+    match &state.proactive_system {
+        Some(ps) => Ok(ps.lock().await.status_snapshot().await),
+        None => Err("主动对话系统未运行！".into()),
+    }
 }
 pub mod role_archive;

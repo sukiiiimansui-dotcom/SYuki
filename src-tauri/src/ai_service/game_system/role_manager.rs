@@ -106,6 +106,22 @@ impl GameRoleManager {
         }
     }
 
+    /// 返回指定角色的完整记忆库（MemoryBank）快照，供可视化面板读取。
+    ///
+    /// 优先读后台压缩引擎的实时缓存（最及时）；未构造该系统或未启用时，
+    /// 回退到 `GameRole.memory_bank`（同步点写回的值）。
+    pub async fn get_role_memory_bank(&self, role_id: i32) -> Option<GameMemoryBank> {
+        match self.memory_bank_systems.get(&role_id) {
+            Some(sys) if sys.is_enabled() => Some(sys.get_memory_bank_snapshot().await),
+            _ => self.loaded_roles.get(&role_id).map(|r| r.memory_bank.clone()),
+        }
+    }
+
+    /// 永久记忆是否开启（全局配置 `use_persistent_memory`）。
+    pub fn memory_enabled(&self) -> bool {
+        self.use_persistent_memory
+    }
+
     pub fn reset_roles(&mut self) {
         self.loaded_roles.clear();
         self.memory_bank_systems.clear();

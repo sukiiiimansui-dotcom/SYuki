@@ -169,7 +169,7 @@ jobs:
           else
             echo "✨ 创建新 Release: $TAG"
 
-            CMD="gh release create \"$TAG\" \"$APK_PATH\" --generate-notes"
+            CMD="gh release create \"$TAG\" \"$APK_PATH\" --notes-file RELEASE_NOTES.md"
 
             if [[ -n "${{ github.event.inputs.release_title }}" ]]; then
               CMD="$CMD --title \"${{ github.event.inputs.release_title }}\""

@@ -31,7 +31,7 @@ use delivery_evaluator::DeliveryEvaluator;
 use interest_manager::InterestManager;
 use schedule_manager::ScheduleManager;
 use strategy_dispatcher::StrategyDispatcher;
-use types::{IntentType, PendingIntent, UserScheduleSettings};
+use types::{IntentType, PendingIntent, PendingIntentSnapshot, ProactiveEvent, ProactiveStatusSnapshot, UserScheduleSettings};
 use visual_monitor::VisualMonitor;
 
 pub struct ProactiveSystem {
@@ -63,6 +63,8 @@ pub struct ProactiveSystem {
     last_user_interaction: std::time::Instant,
     /// 当前"离开期间"已投放的想念次数，用于 away_max_times 上限。
     away_delivered_count: i32,
+    /// 已投放的主动对话历史（内存，保留最近 50 条，重启丢失）。
+    history: Vec<ProactiveEvent>,
 }
 
 impl ProactiveSystem {
@@ -101,6 +103,7 @@ impl ProactiveSystem {
             pending_intents: Vec::new(),
             last_user_interaction: std::time::Instant::now(),
             away_delivered_count: 0,
+            history: Vec::new(),
         };
 
         system
@@ -236,6 +239,38 @@ impl ProactiveSystem {
         self.can_deliver = val;
     }
 
+    /// 主动系统运行时状态快照（供前端可视化「AI 主动状态与历史」）。
+    pub async fn status_snapshot(&self) -> ProactiveStatusSnapshot {
+        let perception = self.activity_monitor.get_user_status();
+        let now = std::time::Instant::now();
+        let pending_intents = self
+            .pending_intents
+            .iter()
+            .map(|i| PendingIntentSnapshot {
+                kind: i.intent_type.key().to_string(),
+                waited_secs: now.duration_since(i.triggered_at).as_secs(),
+            })
+            .collect();
+
+        ProactiveStatusSnapshot {
+            enabled: self.config.enable_proactive_system,
+            running: self.is_running,
+            can_deliver: self.can_deliver,
+            last_interaction_ago_secs: self.last_user_interaction.elapsed().as_secs(),
+            away_delivered_count: self.away_delivered_count,
+            away_max_times: self.config.away_max_times,
+            away_timeout_secs: self.config.away_timeout_secs,
+            interest: self.interest_manager.interest,
+            interest_cap: self.interest_manager.max_interest_cap,
+            proactive_times: self.interest_manager.proactive_times,
+            max_proactive_count: self.interest_manager.max_proactive_count,
+            state: perception.state.as_str().to_string(),
+            description: perception.description,
+            pending_intents,
+            history: self.history.clone(),
+        }
+    }
+
     // ============================================================
     // 核心投放方法
     // ============================================================
@@ -244,10 +279,32 @@ impl ProactiveSystem {
     /// 已侵入 game_status 的副作用（add_line），调用者需确保：
     /// - generation_lock 未被持有
     /// - prompt 已完整生成（含截图分析结果）
-    async fn deliver(&mut self, prompt: String) -> anyhow::Result<()> {
+    async fn deliver(
+        &mut self,
+        prompt: String,
+        intent_type: IntentType,
+    ) -> anyhow::Result<()> {
         tracing::info!("[ProactiveSystem] Delivering proactive dialogue...");
 
         let _lock = self.generation_lock.lock().await;
+        // 记录一条主动投放历史（内存，供可视化面板展示）。
+        if self.history.len() >= 50 {
+            self.history.remove(0);
+        }
+        self.history.push(ProactiveEvent {
+            ts_ms: chrono::Utc::now().timestamp_millis() as u64,
+            kind: intent_type.key().to_string(),
+            preview: prompt.chars().take(120).collect(),
+        });
+        // 写入心跳/主动专用日志（data/log/heartbeat/）
+        crate::utils::heartbeat_logger::log_event(
+            "deliver",
+            &format!(
+                "[{}] {}",
+                intent_type.key(),
+                prompt.chars().take(60).collect::<String>()
+            ),
+        );
         events::emit_thinking(&self.app, true);
 
         let generator = {
@@ -357,7 +414,7 @@ impl ProactiveSystem {
                     waited.as_secs(),
                     self.pending_intents.len()
                 );
-                self.deliver(intent.prompt).await?;
+                self.deliver(intent.prompt, intent.intent_type).await?;
                 return Ok(true);
             }
         }
@@ -423,12 +480,20 @@ impl ProactiveSystem {
                     let formatted = PromptRole::System.build_prompt(&prompt);
                     if sys.generation_lock.try_lock().is_ok() {
                         sys.away_delivered_count += 1;
+                        crate::utils::heartbeat_logger::log_event(
+                            "miss_away",
+                            &format!(
+                                "elapsed={}s delivered={}",
+                                sys.last_user_interaction.elapsed().as_secs(),
+                                sys.away_delivered_count,
+                            ),
+                        );
                         tracing::info!(
                             "[ProactiveSystem] Away trigger fired (elapsed {}s, delivered {}), delivering miss...",
                             sys.last_user_interaction.elapsed().as_secs(),
                             sys.away_delivered_count,
                         );
-                        sys.deliver(formatted).await?;
+                        sys.deliver(formatted, IntentType::Miss).await?;
                         return Ok(());
                     }
                 }
@@ -451,7 +516,7 @@ impl ProactiveSystem {
                     tracing::info!(
                         "[ProactiveSystem] Alarm triggered, evaluate passed, delivering"
                     );
-                    sys.deliver(formatted).await?;
+                    sys.deliver(formatted, IntentType::Alarm).await?;
                 } else {
                     tracing::info!("[ProactiveSystem] Alarm triggered, evaluate failed, stashing");
                     sys.pending_intents.push(PendingIntent {
@@ -509,7 +574,7 @@ impl ProactiveSystem {
                 intent_type
             );
             let formatted = PromptRole::System.build_prompt(&raw_prompt);
-            sys.deliver(formatted).await?;
+            sys.deliver(formatted, intent_type).await?;
         } else {
             let formatted = PromptRole::System.build_prompt(&raw_prompt);
             tracing::info!(

@@ -49,6 +49,7 @@
           @open-settings="handleOpenSettings"
           @open-credits="handleOpenCredits"
           @open-workshop="showWorkshopMenu"
+          @open-memory="() => router.push('/memory')"
           @open-bili="() => router.push('/bilibili')"
           @open-netmusic="() => router.push('/netmusic')"
           @open-script-editor="() => router.push('/script-editor')"

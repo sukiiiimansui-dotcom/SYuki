@@ -173,6 +173,15 @@ impl PersistentMemorySystem {
         }
     }
 
+    /// 返回当前记忆库（MemoryBank）的完整快照。
+    ///
+    /// 供可视化面板（前端）实时读取，拿到的是后台压缩引擎的**最新**缓存，
+    /// 比 `GameRole.memory_bank`（仅在同步点写回）更及时。
+    pub async fn get_memory_bank_snapshot(&self) -> GameMemoryBank {
+        let bank = self.memory_bank.lock().await;
+        bank.clone()
+    }
+
     // ── 同步写回 ──
 
     /// 非阻塞：若后台任务已完成且未同步，将压缩结果写回 `GameRole`。

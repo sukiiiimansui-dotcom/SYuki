@@ -108,6 +108,18 @@ pub enum IntentType {
 }
 
 impl IntentType {
+    /// 小写标签，用于前端展示。
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Topic => "topic",
+            Self::Screen => "screen",
+            Self::Todo => "todo",
+            Self::ImportantDay => "important_day",
+            Self::Miss => "miss",
+            Self::Alarm => "alarm",
+        }
+    }
+
     /// 意图存活时间（秒）。超时自动作废，不再投放。
     pub fn ttl_secs(self) -> u64 {
         match self {
@@ -129,4 +141,58 @@ pub struct PendingIntent {
     pub intent_type: IntentType,
     /// 生成时间，用于 TTL 过期判断
     pub triggered_at: Instant,
+}
+
+// ==========================================
+// 主动对话状态快照（供前端可视化）
+// ==========================================
+
+/// 一条已投放的主动对话事件（内存历史，重启丢失；保留最近若干条）。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProactiveEvent {
+    /// 触发时间（unix 毫秒）。
+    pub ts_ms: u64,
+    /// 意图类型的小写标签：miss / alarm / todo / important_day / screen / topic。
+    pub kind: String,
+    /// 触发 prompt 摘要（截断）。
+    pub preview: String,
+}
+
+/// 暂存意图的快照。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PendingIntentSnapshot {
+    pub kind: String,
+    pub waited_secs: u64,
+}
+
+/// 主动系统运行时状态快照（读命令返回给前端）。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProactiveStatusSnapshot {
+    /// 主动系统总开关。
+    pub enabled: bool,
+    /// 后台 30s 轮询是否在跑。
+    pub running: bool,
+    /// 前端上报：当前是否适合投放。
+    pub can_deliver: bool,
+    /// 距最近一次用户交互的秒数。
+    pub last_interaction_ago_secs: u64,
+    /// 本轮离开期间已想念次数。
+    pub away_delivered_count: i32,
+    pub away_max_times: i32,
+    pub away_timeout_secs: u32,
+    /// 兴趣累积值 / 上限。
+    pub interest: f64,
+    pub interest_cap: f64,
+    pub proactive_times: i32,
+    pub max_proactive_count: i32,
+    /// 感知到的用户状态（IDLE/BROWSING/WORK/GAME/CASUAL）。
+    pub state: String,
+    pub description: String,
+    /// 暂存的待投放意图队列。
+    pub pending_intents: Vec<PendingIntentSnapshot>,
+    /// 已投放的主动对话历史。
+    pub history: Vec<ProactiveEvent>,
 }

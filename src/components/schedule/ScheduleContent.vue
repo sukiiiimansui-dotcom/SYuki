@@ -50,6 +50,13 @@
         </button>
         <button
           class="w-full flex items-center space-x-6 px-5 py-3 no-underline rounded-lg text-white transition-colors duration-200 relative z-10 adv-nav-link hover:bg-gray-200 hover:text-black active:text-white active:font-bold"
+          @click="changeView('proactive_status')"
+        >
+          <Heart :size="18" />
+          <span>主动状态</span>
+        </button>
+        <button
+          class="w-full flex items-center space-x-6 px-5 py-3 no-underline rounded-lg text-white transition-colors duration-200 relative z-10 adv-nav-link hover:bg-gray-200 hover:text-black active:text-white active:font-bold"
           @click="changeView('tool_calls')"
         >
           <Wrench :size="18" />
@@ -139,6 +146,8 @@
 
         <ProactivePage ref="proactiveRef" />
 
+        <ProactiveStatusPage />
+
         <!--工具调用设置界面-->
         <ToolCallsPage />
       </div>
@@ -154,6 +163,7 @@ import TodoPage from '@/components/schedule/pages/TodoPage.vue'
 import SchedulePage from '@/components/schedule/pages/SchedulePage.vue'
 import CalendarPage from '@/components/schedule/pages/CalendarPage.vue'
 import ProactivePage from '@/components/schedule/pages/ProactivePage.vue'
+import ProactiveStatusPage from '@/components/schedule/pages/ProactiveStatusPage.vue'
 import ToolCallsPage from '@/components/schedule/pages/ToolCallsPage.vue'
 import {
   Layers,
@@ -161,6 +171,7 @@ import {
   CalendarDays,
   Plus,
   Cat,
+  Heart,
   ChevronLeft,
   Sparkles,
   Wrench,

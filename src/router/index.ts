@@ -14,6 +14,7 @@ const LogWindow = () => import('../components/views/LogWindow.vue')
 const ScriptEditor = () => import('../components/views/ScriptEditor.vue')
 const Bilibili = () => import('../components/views/Bilibili.vue')
 const NetMusic = () => import('../components/views/NetMusic.vue')
+const MemoryPanel = () => import('../components/views/MemoryPanel.vue')
 
 // 1. 定义路由表
 const routes = [
@@ -61,6 +62,11 @@ const routes = [
     path: '/netmusic',
     name: 'NetMusic',
     component: NetMusic,
+  },
+  {
+    path: '/memory',
+    name: 'MemoryPanel',
+    component: MemoryPanel,
   },
 ]
 
