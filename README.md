@@ -7,13 +7,24 @@
 > 基于开源 [LingChat](https://github.com/SlimeBoyOwO/LingChat)（Tauri 2 + Vue 3 + Rust）深度改造，
 > 把 SYuki 的差异化能力搬进 LingChat 原生体系。
 
-[![OS](https://img.shields.io/badge/OS-Android%20%7C%20Windows%20%7C%20Linux%20%7C%20macOS-blue?style=flat-square)](https://github.com/SlimeBoyOwO/LingChat)
+[![OS](https://img.shields.io/badge/OS-Android%20APK%20only-blue?style=flat-square)](https://github.com/sukiiiimansui-dotcom/SYuki/releases/tag/v0.1.0)
+[![Release](https://img.shields.io/badge/Release-v0.1.0%20(pre--alpha%2C%20many%20bugs)-red?style=flat-square)](https://github.com/sukiiiimansui-dotcom/SYuki/releases/tag/v0.1.0)
 [![Rust](https://img.shields.io/badge/Backend-Rust-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Vue](https://img.shields.io/badge/Frontend-Vue3+-green?style=flat-square&logo=vuedotjs)](https://vuejs.org/)
 
 **L-SYuki** — 搭 LingChat 的车，注入 SYuki 的魂。
 
 </div>
+
+---
+
+## 📥 下载 / Release
+
+> ⚠️ **平台说明：目前仅提供 Android APK，iOS / Windows / Linux / macOS 等平台暂未提供**（受技术、版权、发布与分发流程等因素限制）。跨平台适配与发布尚未打通。
+
+- **v0.1.0（pre-alpha，含大量 bug，仅作尝鲜）** → [GitHub Release](https://github.com/sukiiiimansui-dotcom/SYuki/releases/tag/v0.1.0) · 资产 `SYuki-v0.1.0-universal.apk`（universal 全 ABI，已签名、可安装）
+- 安装包与说明见 [`RELEASE_NOTES.md`](RELEASE_NOTES.md)（含已知问题 / 平台说明）。
+- 反馈 / 提 issue → [Issues](https://github.com/sukiiiimansui-dotcom/SYuki/issues)；当前为快速迭代 pre-alpha，接口 / 存储可能随时变动。
 
 ---
 
@@ -52,6 +63,8 @@ LingChat 原生已内置：角色卡换装 / 立绘、剧本引擎（多事件 +
 3. **📺 B站学习**：为 AI 提供 B站网络文化（热榜 / 搜索 / 弹幕梗 / 高赞评论学习库），AI 可按聊天趋向自主搜索并灵活调用工具。
 4. **💗 主动 + 心跳系统**：用户离开一段时间 → AI 主动想念搭话；主动投放可走上帝 Agent 多角色自主接话。
 5. **🌐 AI 工具系统**：搜索 / 天气 / 音乐 / 屏幕 / 休息等，AI function-calling 灵活调用，全部开关可在设置界面一键启用。
+6. **🧠 记忆可视化（本批新增）**：记忆图谱 · **无限沙盒**（自由缩放/拖动）· **分层视图**（L1 近期 / L2 长期 / L3 用户 / L4 约定 4 大球 + 食物链方向连线）· **点大球展开该层记忆** · **点记忆球查看「关联最强 Top-4」浮窗** · **类别卡片**（长条区块点击展开）· **情绪雷达**（五维心情 + 时间线）· **小窗悬浮**（可拖拽 / 最小化 / 全屏）。
+7. **📈 主动状态可视化 + 心跳/主动专用日志**：AI 是否在想念（运行状态 / 想念次数 / 兴趣值 / 当前感知 / 待投放队列），主动事件写入 `data/log/heartbeat/heartbeat_YYYYMMDD.log`。
 
 > 所有移植功能的开关都已注册进设置界面（`config/tree.rs` → 设置面板「高级设置」），像 LingChat 原生功能一样可开可关。
 
