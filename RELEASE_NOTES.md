@@ -32,6 +32,15 @@
   - 🧭 **上游仓库（原版 LingChat）**：<https://github.com/SlimeBoyOwO/LingChat>
   - 🏠 本项目仓库：<https://github.com/sukiiiimansui-dotcom/SYuki>
 
+## 📱 平台与安装
+- 当前**仅提供 Android APK**（universal，含 arm64-v8a / armeabi-v7a / x86 / x86_64，可按需安装）。
+- **iOS / Windows / Linux / macOS 等平台暂未提供**。
+- **原因**：受**技术与版权**等因素限制：
+  - 部分依赖/资源（如语音模型、B站/网易云等第三方接口）在其它平台存在适配与授权问题；
+  - 跨平台签名、发布与分发（应用商店 / 公证）流程尚未打通；
+  - 本阶段仅以手机端真机（Android）为主要验证载体。
+- 若后续条件成熟，再评估其它平台的适配与发布。
+
 ## 🐛 已知问题（部分）
 - 主动/记忆历史为**内存态**，重启即清空。
 - 浏览器/预览模式使用 **mock 数据**，与真实后端表现不一致。
