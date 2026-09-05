@@ -14,7 +14,7 @@
 - **不要一次判断失败**，用脚本循环重试（间隔 60s），网络恢复后自动成功。
 - 项目内置脚本：
   - `_upstream_sync.sh`：拉取官方最新 + 显示差异（含网络重试思路）。
-  - 推送用背景重试循环（如 `push_all_retry.sh`：`git push origin main channel/upstream` 循环重试，成功后退出并记日志）。
+  - 推送用背景重试循环（如 `push_all_retry.sh`：`git push origin main` 循环重试，成功后退出并记日志）。
 - 手动重试：`for i in 1 2 3; do git push origin main && break; sleep 5; done`
 
 ## 经验

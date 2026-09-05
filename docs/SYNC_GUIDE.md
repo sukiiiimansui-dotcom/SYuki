@@ -53,23 +53,20 @@
 
 GitHub 分支即"频道"，各频道互不干扰、保留 main：
 
-| 频道 | 内容 | 角色 |
+| 来源 | 内容 | 角色 |
 |---|---|---|
-| `main` | 当前稳定版（旧结构 + 我们功能） | 稳定/可发布 |
-| `channel/upstream` | **官方上游(LingChat 0.5.1) + 我们功能**（migration-official 基线） | 前卫频道：全面领先官方 |
+| `main`（本仓库） | SYuki 产品：独有功能 + 搬运的官方功能 | 稳定 / 可发布 |
+| 官方 **LingChat 仓库**（upstream） | 官方最新功能全量来源 | 上游源 |
 
-### 为什么这样最好
-- **不用 force-push main**（main 历史保留、可随时回滚）。
-- `channel/upstream` 按官方结构组织：
-  - 官方 0.5.1 全部功能（治卡/ASR/设置页/台词融合/web投影/0.1.2增强等）**自动内置**（upstream 自带）——无需手工搬运。
-  - 我们独有功能（记忆/主动/网易云/B站/情绪雷达等）作为**薄层叠加上去**。
-- **未来官方更新**：在 `channel/upstream` 上 `git fetch upstream && git rebase upstream/main`（结构相同→自动合并），极少冲突。同步后 `main` 保持不动。
+### 为什么这样
+- **`main` 是我们的产品**：不改仓库结构、保留全部 SYuki 功能（记忆/主动/网易云/B站/情绪雷达等）。
+- 官方功能从 **LingChat 仓库（upstream）** 逐个搬进 `main`（适配我们结构、验证构建），而不是维护单独的官方对齐分支。
+- **未来官方更新**：`git fetch upstream` → 看官方新增 commit → 搬运进 `main`（适配、验证、合入）。`main` 始终是唯一主线。
 
 ### 日常操作
-- 看前卫功能/体验官方新特性 → `channel/upstream`。
-- 看稳定版 → `main`。
-- 官方更新同步 → 在 `channel/upstream` 上 `bash _upstream_sync.sh rebase`。
-- 确认稳定后，把 `channel/upstream` 的关键成果 cherry-pick / merge 回 `main`（人工审查）。
+- 同步官方最新 → `bash _upstream_sync.sh`（fetch upstream + 显示自上次基准 `_upstream_base.txt` 以来的新增）。
+- 官方新功能 → 按 `HANDOFF-*.md` 的"搬运模板"（不改结构、保留我们功能、验证 vue-tsc/vite/cargo）搬进 `main`。
+- 目标：`main` 功能领先于基础版，并保留我们独有功能（应用 LingChat 仓库为上游源）。
 
 ### 约束
-- channel/upstream 不覆盖/不删我们的独有功能；不 force-push main。
+- 不覆盖 / 不删我们独有功能；以 `main` 为唯一主线；官方 **LingChat 仓库**（upstream）为上游源。
