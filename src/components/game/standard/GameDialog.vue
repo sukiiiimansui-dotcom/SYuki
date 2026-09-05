@@ -432,6 +432,15 @@ import { dialogueMerge } from '../../../core/events/dialogue-merge'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { setInputHasText } from '../../../composables/useCanDeliver'
+import { useAsrStore } from '../../../stores/modules/settings/asr'
+import {
+  ASR_AUTO_SEND_DELAY_MS,
+  asrVoiceActive,
+  lockAsrForDisplay,
+  registerAsrInputBridge,
+  setMobileMenuOpen,
+  useAsrInput,
+} from '../../../composables/useAsrInput'
 
 const inputMessage = ref('')
 const { t } = useI18n()
@@ -464,10 +473,20 @@ const isInlineDisplayMode = computed(
   () => settingsStore.text.inlineMotionText && gameStore.currentStatus === 'responding',
 )
 
-// 语音识别相关状态
-const isRecording = ref(false)
-const interimText = ref('') // 新增：用于实时存储临时识别出来的文本
-let speechRecognition: any = null
+// 语音识别（useAsrInput 统一 mic 按钮 / 自动监听两种触发源）
+const asrStore = useAsrStore()
+const asrInput = useAsrInput()
+const autoListenOn = computed(() => asrStore.settings.auto_listen)
+const autoListenActive = computed(() => asrInput.autoListenActive.value)
+const isRecording = computed(() => asrInput.phase.value === 'recording')
+const interimText = ref('') // 保留：监听时占位符展示
+const canStartMic = computed(
+  () =>
+    (autoListenOn.value && asrStore.settings.voice_input_enabled) ||
+    asrInput.phase.value === 'recording' ||
+    asrInput.canStartAsr(false, true),
+)
+watch(showMobileMenu, (open) => setMobileMenuOpen(open))
 
 // 截图相关状态
 const hasScreenshot = ref(false)
@@ -631,7 +650,7 @@ const placeholderText = computed(() => {
   }
 })
 
-const isInputEnabled = computed(() => gameStore.currentStatus === 'input')
+const isInputEnabled = computed(() => gameStore.currentStatus === 'input' && !asrVoiceActive.value)
 
 watch(
   () => gameStore.currentStatus,
@@ -732,80 +751,48 @@ watch(isInlineDisplayMode, (visible) => {
   }
 })
 
-// === 语音识别功能实现 ===
-const initSpeechRecognition = () => {
-  const SpeechRecognition =
-    (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-  if (!SpeechRecognition) {
-    console.warn('当前浏览器不支持 Web Speech API，语音功能不可用')
-    return null
+// === 语音识别（useAsrInput 接管，替换上游 Web Speech 实现） ===
+// 监听 asr-text 事件（fill_only 模式 dispatch）：识别结果填入输入框，由用户手动发送
+const ASR_DISPLAY_MS = 400
+function onAsrText(e: Event) {
+  const ce = e as CustomEvent<string>
+  if (typeof ce.detail === 'string') {
+    inputMessage.value = ce.detail
+    lockAsrForDisplay(ASR_DISPLAY_MS)
   }
-
-  const recognition = new SpeechRecognition()
-  recognition.lang = 'zh-CN' // 默认识别中文
-  // 修改：将 interimResults 设为 true 以获取中间结果
-  recognition.interimResults = true
-  recognition.maxAlternatives = 1
-
-  recognition.onstart = () => {
-    isRecording.value = true
-    interimText.value = '' // 开始录音时清空中间文本
-  }
-
-  recognition.onresult = (event: any) => {
-    let interim = ''
-    let final = ''
-
-    // 遍历所有结果，区分是最终结果还是正在识别的临时结果
-    for (let i = event.resultIndex; i < event.results.length; ++i) {
-      if (event.results[i].isFinal) {
-        final += event.results[i][0].transcript
-      } else {
-        interim += event.results[i][0].transcript
-      }
-    }
-
-    if (interim) {
-      // 如果有中间结果，更新到专门的变量供 placeholder 使用
-      interimText.value = interim
-    }
-
-    if (final) {
-      // 识别完成，赋值并发送
-      interimText.value = ''
-      inputMessage.value = final
-      send()
-    }
-  }
-
-  recognition.onerror = (event: any) => {
-    console.error('语音识别出错:', event.error)
-    isRecording.value = false
-    interimText.value = ''
-  }
-
-  recognition.onend = () => {
-    isRecording.value = false
-    interimText.value = ''
-  }
-
-  return recognition
 }
 
-const toggleRecording = async () => {
-  if (!speechRecognition) {
-    await dialogStore.alert(t('game.dialog.speechNotSupported'))
-    return
-  }
-  if (isRecording.value) {
-    speechRecognition.stop()
-  } else {
-    // 如果不在允许输入的阶段，阻止录音
-    if (gameStore.currentStatus !== 'input') {
-      await dialogStore.alert(t('game.dialog.inputNotAllowed'))
+// 监听 asr-send 事件（auto_send 模式 dispatch）：识别结果填入输入框，延迟后自动 send()
+function onAsrAutoSend(e: Event) {
+  const ce = e as CustomEvent<string>
+  if (typeof ce.detail !== 'string') return
+  inputMessage.value = ce.detail
+  window.setTimeout(() => send(), ASR_AUTO_SEND_DELAY_MS)
+}
+
+async function toggleRecording() {
+  try {
+    // auto_listen 模式开 + 总开关开：mic 按钮 = 切换功能开关（暂停/恢复监听）
+    if (autoListenOn.value && asrStore.settings.voice_input_enabled) {
+      asrInput.toggleAutoListenFunction()
       return
     }
-    speechRecognition.start()
+    if (asrInput.phase.value === 'idle') {
+      // 手动录音：需总开关开启 + 输入阶段
+      if (!asrStore.settings.voice_input_enabled) {
+        await dialogStore.alert(t('game.dialog.speechNotSupported'))
+        return
+      }
+      if (gameStore.currentStatus !== 'input') {
+        await dialogStore.alert(t('game.dialog.inputNotAllowed'))
+        return
+      }
+      await asrInput.start('button')
+    } else if (asrInput.phase.value === 'recording') {
+      asrInput.stop()
+    }
+  } catch (err) {
+    console.warn('[ASR] toggle failed:', err)
   }
 }
 
@@ -820,8 +807,17 @@ onMounted(async () => {
   }
 
   document.addEventListener('contextmenu', handleDialogShow)
-  // 初始化语音识别对象
-  speechRecognition = initSpeechRecognition()
+  // 监听 asr-text 事件（fill_only 模式 dispatch）
+  window.addEventListener('asr-text', onAsrText)
+  // 监听 asr-send 事件（auto_send 模式 dispatch）
+  window.addEventListener('asr-send', onAsrAutoSend)
+  // 输入框桥：流式 partial 实时写入 + 拼接基准读取
+  registerAsrInputBridge({
+    getText: () => inputMessage.value,
+    setText: (v) => {
+      inputMessage.value = v
+    },
+  })
   // 初始化容器宽度
   updateContainerWidth()
   // 监听窗口大小变化
@@ -844,6 +840,8 @@ onMounted(async () => {
 onUnmounted(() => {
   document.removeEventListener('contextmenu', handleDialogShow)
   window.removeEventListener('resize', updateContainerWidth)
+  window.removeEventListener('asr-text', onAsrText)
+  window.removeEventListener('asr-send', onAsrAutoSend)
   if (unlistenScreenshot) unlistenScreenshot()
   if (unlistenCancelled) unlistenCancelled()
 })
