@@ -79,10 +79,12 @@ LingChat 原生已内置：角色卡换装 / 立绘、剧本引擎（多事件 +
 7. **📈 主动状态可视化 + 心跳/主动专用日志**：AI 是否在想念（运行状态 / 想念次数 / 兴趣值 / 当前感知 / 待投放队列），主动事件写入 `data/log/heartbeat/heartbeat_YYYYMMDD.log`。
 8. **⚡ 演出流畅度（本批移植）**：消息合并 + 事件队列调度优化 —— 同角色连续短句自动合并续打、AUTO 与台词合并共用单管道调度，减少切句闪断/卡顿。位置：`src/core/events/dialogue-merge.ts`（合并状态）、`src/core/events/event-queue.ts`（武装判定+队列）、`src/components/views/MainChat.vue`（自动推进/合并调度）、`src/components/game/standard/GameDialog.vue`（合并追加显示）、`src/stores/modules/settings/index.ts`（`mergeLineThreshold/mergeLineDelay/autoAdvanceDelay` 配置）。
 9. **🎙️ 语音输入 ASR（本批移植）**：手动麦克风 + 自动监听；统一采集/识别/流式（VAD 端点检测 + 多 provider），识别结果填入输入框；设置含 `voice_input_enabled` 总开关。位置：`src/composables/useAsrInput.ts`（统一采集+识别）、`src/api/services/asr.ts`（后端命令封装）、`src/stores/modules/settings/asr.ts`（ASR 设置 store）、`src/components/game/standard/GameDialog.vue`（mic 按钮）、Rust `src-tauri/src/ai_service/asr/` + `src-tauri/src/api/asr.rs`。
+10. **🎛️ 设置页重排（本批移植，部分）**：设置导航/面板重构 + 新增 `SettingsAdvanceMenu`、`SettingsCast`（web 投影入口，预留给后续）；`Button`/`PluginTag`/`codex`/`tts-cosyvoice` 等。位置：`src/components/settings/`、`src/api/services/codex/`、`src/api/services/tts/tts-cosyvoice.ts`。注：官方 `SettingsText/Background/Tts` 深度改写依赖官方专属后端（`gpu-perf`/`hdr`/`vite-devtools` 等），已回退到旧结构可用版（暂缓）。
+11. **📝 台词融合 + 动作优化（本批移植）**：连续台词/动作按段合并续打，`charReveal` 逐字符淡入渲染（台词/动作双容器），`mergeMotionMode`（append/replace）控制动作段处理。位置：`src/utils/typewriter/charReveal.ts`、`src/components/game/standard/GameDialog.vue`、`src/stores/modules/settings/index.ts`（`mergeMotionMode`）。
 
 > 所有移植功能的开关都已注册进设置界面（`config/tree.rs` → 设置面板「高级设置」），像 LingChat 原生功能一样可开可关。
 
-> 📌 **本批仍在进行（未合入 main）**：设置页重写（`task/settings-dev`）、台词融合+动作优化 / web 投影（`task/dialogue-dev`）——均在各独立分支，完成后合入并同步更新本页。
+> 📌 **状态**：治卡 / ASR / 设置页重排（部分）/ 台词融合+动作优化 已完成（见清单）；**web 投影** 因依赖官方 Rust cast 后端（抓屏/麦克风/HTTP server，平台相关）**暂缓**。设置页与台词融合当前在各独立分支（`task/settings-dev`、`task/dialogue-dev`），合入 main 后同步更新本页。
 
 ---
 
