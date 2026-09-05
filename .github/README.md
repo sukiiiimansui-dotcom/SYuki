@@ -21,7 +21,7 @@
 
 ## LingChat 最新 0.5.1 版已搬运功能
 
-> **（由于技术原因，短期不全，请移到 [Lingchat](https://github.com/SlimeBoyOwO/LingChat 查看全部功能）**
+> **（由于技术原因，短期不全，请移到 [Lingchat](https://github.com/SlimeBoyOwO/LingChat)查看全部功能**
 
 本仓库同时把 **官方 LingChat 最新 0.5.1** 的功能搬进 L-SYuki，已搬运：
 
@@ -30,8 +30,7 @@
 - 📝 **台词融合 + 动作优化**（连续台词/动作按段续打，`charReveal` 逐字符渲染）
 - 🎛️ **设置页重排**（部分）· **web 投影入口**（`SettingsCast`，后端 cast 服务暂缓）
 
-> 官方 **0.5.1 全部**功能（含上述与更多）在 **`channel/upstream`** 频道（= 官方最新 + 我们功能）查看 / 使用。
-
+> 官方 **0.5.1 全部**功能（含上述与更多）在 **[Lingchat](https://github.com/SlimeBoyOwO/LingChat)** 频道
 ## 社区与源码
 
 - 改动 / 迭代：本仓库 `main` 分支（L-SYuki）
