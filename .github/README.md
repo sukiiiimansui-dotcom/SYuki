@@ -21,7 +21,7 @@
 
 ## LingChat 最新 0.5.1 版已搬运功能
 
-> **（由于技术原因，短期不全，请移到 `channel/upstream` 查看全部功能）**
+> **（由于技术原因，短期不全，请移到 [Lingchat](https://github.com/SlimeBoyOwO/LingChat 查看全部功能）**
 
 本仓库同时把 **官方 LingChat 最新 0.5.1** 的功能搬进 L-SYuki，已搬运：
 
