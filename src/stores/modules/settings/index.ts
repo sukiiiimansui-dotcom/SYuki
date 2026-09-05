@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS = {
     autoAdvanceDelay: 1000, // 自动模式自动推进延迟 (ms, 0-2000)
     mergeLineThreshold: 55, // 台词合并阈值：同角色连续短句（字符数）自动合并续打；0=关闭
     mergeLineDelay: 200, // 台词合并时上一句展示完成到续打的延迟 (ms)
+    mergeMotionMode: 'append' as const, // 台词合并时动作段的处理：append=接在后面显示 | replace=清旧动作只留本次
     sedentaryReminder: false, // 久坐喝水提醒
     fontFamily: '', // 自定义界面字体名（为空走系统默认栈；初始菜单/加载页不受影响）
   },
@@ -74,6 +75,7 @@ export interface TextSettings {
   autoAdvanceDelay: number
   mergeLineThreshold: number
   mergeLineDelay: number
+  mergeMotionMode: 'append' | 'replace'
   sedentaryReminder: boolean
   fontFamily: string
 }
