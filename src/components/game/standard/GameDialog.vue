@@ -329,7 +329,8 @@
             duration-300
             outline-none"
         >
-          <!-- 内联动作文本显示区（仅内联模式+回应状态时可见） -->
+          <!-- 内联动作文本显示区（仅内联模式+回应状态时可见）
+               两子容器：台词区白字 + 动作区灰字，颜色由容器决定，字符只负责动画 span -->
           <div
             v-show="isInlineDisplayMode"
             ref="inlineDisplayRef"
@@ -350,7 +351,16 @@
               outline-none
               text-shadow-[inherit]"
             @keydown.enter.exact.prevent="sendOrContinue"
-          ></div>
+          >
+            <!-- 台词区：白字 -->
+            <div ref="dialogueLineRef" class="whitespace-pre-line text-white"></div>
+            <!-- 动作区：灰字 -->
+            <div
+              ref="motionLineRef"
+              class="whitespace-pre-line text-[#9ca3af]"
+              :class="{ 'italic text-base': isShowingMotionText }"
+            ></div>
+          </div>
 
           <!-- 标准 textarea（输入模式或非内联显示模式） -->
           <textarea
@@ -427,6 +437,8 @@ import { useLlmProvidersStore } from '../../../stores/modules/llm-providers'
 import { useTypeWriter } from '../../../composables/ui/useTypeWriter'
 import { useDialogAppearance } from '../../../composables/useDialogAppearance'
 import { escapeHtml } from '../../../utils/escapeHtml'
+import { TypeWriter } from '../../../utils/typewriter/TypeWriter'
+import { createCharRevealWriter } from '../../../utils/typewriter/charReveal'
 import { eventQueue } from '../../../core/events/event-queue'
 import { dialogueMerge } from '../../../core/events/dialogue-merge'
 import { invoke } from '@tauri-apps/api/core'
@@ -494,37 +506,112 @@ const onMobileMenuAction = (action: () => void) => {
   showMobileMenu.value = false
 }
 const currentDisplayedText = ref('')
+const dialogueLineRef = ref<HTMLDivElement | null>(null)
+const motionLineRef = ref<HTMLDivElement | null>(null)
 
-/**
- * 内联显示写入函数：根据文本中 \n 的位置构建混色 innerHTML。
- * 换行前 → 白色 span，换行后 → 灰色 span（.motion-text-gray）。
- */
-function writeInlineHtml(_element: HTMLElement, text: string): void {
-  if (!inlineDisplayRef.value) return
-  const newlineIndex = text.indexOf('\n')
-  if (newlineIndex > 0) {
-    const dialogue = escapeHtml(text.substring(0, newlineIndex))
-    const motion = escapeHtml(text.substring(newlineIndex + 1))
-    inlineDisplayRef.value.innerHTML = `<span style="color:#fff">${dialogue}</span><br><span class="motion-text-gray">${motion}</span>`
-  } else if (newlineIndex === 0) {
-    const motion = escapeHtml(text.substring(1))
-    inlineDisplayRef.value.innerHTML = `<br><span class="motion-text-gray">${motion}</span>`
-  } else {
-    inlineDisplayRef.value.innerHTML = `<span style="color:#fff">${escapeHtml(text)}</span>`
+// 台词合并显示的分段模型（唯一事实来源）：台词/动作按序排列，颜色由容器 CSS 决定
+// （台词区白、动作区灰），普通台词自带换行不再干扰分色。
+type DisplaySegment = { kind: 'dialogue' | 'motion'; text: string }
+let segments: DisplaySegment[] = []
+
+// 把一句台词构造成分段：内联模式台词+动作两段都进；标准模式仍走 textarea 两段式，只进台词段。
+function buildSegments(line: string): DisplaySegment[] {
+  const segs: DisplaySegment[] = [{ kind: 'dialogue', text: line }]
+  if (settingsStore.text.inlineMotionText && uiStore.showCharacterMotionText) {
+    segs.push({ kind: 'motion', text: uiStore.showCharacterMotionText })
   }
+  return segs
+}
+
+// charReveal 只负责「打字内容」：内联模式=台词段（动作段由独立动作打字机负责）。
+function typedText(segs: DisplaySegment[] = segments): string {
+  return segs.filter((s) => s.kind === 'dialogue').map((s) => s.text).join('')
+}
+
+// 动作区第二打字机（仅内联模式）：动作文本独立逐字打字，保留打字机效果。
+// 单独一个 TypeWriter + charReveal，不混进台词打字机流——replace 模式「旧动作被清掉」
+// 使文本非单调变化，单流 charReveal 的 prev 前缀去重无法处理。append 用 append() 接续。
+// soundUrls=[] 避免动作打字重复播对话音效。
+const motionReveal = createCharRevealWriter({
+  charHtml: (char, _index, _rawText, animate) => {
+    if (char === '\n') return '<br>'
+    if (char === ' ') return ' '
+    const anim = animate
+      ? ';animation:tw-char-rise .28s cubic-bezier(.22, 1, .36, 1) forwards'
+      : ''
+    return `<span style="display:inline-block${anim}">${escapeHtml(char)}</span>`
+  },
+})
+let motionWriter: TypeWriter | null = null
+function ensureMotionWriter(): TypeWriter | null {
+  if (!motionLineRef.value) return null
+  if (!motionWriter) {
+    motionWriter = new TypeWriter(motionLineRef.value, undefined, [], motionReveal.writeFn)
+  }
+  return motionWriter
+}
+function startMotionTyping(text: string, speed?: number) {
+  ensureMotionWriter()?.start(text, speed)
+}
+function appendMotionTyping(text: string) {
+  ensureMotionWriter()?.append(text)
+}
+function stopMotionTyping() {
+  motionWriter?.stop()
+  motionWriter?.clear()
+}
+
+// 逐字符淡入+上浮渲染器。内联模式：打字内容只含台词段 → 一律进台词区；
+// 动作区由独立动作打字机负责。颜色由容器 CSS 决定，字符只负责动画 span。
+const charReveal = createCharRevealWriter({
+  charHtml: (char, _index, _rawText, animate) => {
+    if (char === '\n') return '<br>'
+    if (char === ' ') return ' '
+    const anim = animate
+      ? ';animation:tw-char-rise .28s cubic-bezier(.22, 1, .36, 1) forwards'
+      : ''
+    return `<span style="display:inline-block${anim}">${escapeHtml(char)}</span>`
+  },
+  route: () => dialogueLineRef.value,
+  // 清空子容器内容、保留容器结构——清外层会把子容器节点销毁，模板 ref 指向
+  // 脱离文档的旧节点，之后字符全插进不可见处。内联模式动作区由动作打字机管理，
+  // 这里只清台词区（台词 typewriter 首个 tick 也会触发一次 clear，若清动作区会
+  // 把动作打字机刚渲染的内容抹掉）。
+  clear: () => {
+    if (dialogueLineRef.value) dialogueLineRef.value.innerHTML = ''
+    if (motionLineRef.value) motionLineRef.value.innerHTML = ''
+  },
+})
+
+// 清空回复显示区并重置渲染器增量状态（新台词 / 内联模式段更新前调用）
+function resetResponseDisplay() {
+  if (inlineDisplayRef.value) charReveal.clear(inlineDisplayRef.value)
+  // 内联模式动作区由动作打字机管理：一并停止清空
+  if (settingsStore.text.inlineMotionText) stopMotionTyping()
 }
 
 // 立即把当前台词写入显示元素（不经过打字动画；供挂载恢复使用）
 function renderLineInstant(line: string) {
   currentDisplayedText.value = line
+  segments = buildSegments(line)
   if (settingsStore.text.inlineMotionText) {
+    if (inlineDisplayRef.value) {
+      charReveal.renderInstant(inlineDisplayRef.value, typedText())
+      // 内联模式动作区瞬时恢复（重挂载不打字）
+      stopMotionTyping()
+      const motionText = uiStore.showCharacterMotionText
+      if (motionText && motionLineRef.value) {
+        motionReveal.renderInstant(motionLineRef.value, motionText)
+      } else if (motionLineRef.value) {
+        motionLineRef.value.innerHTML = ''
+      }
+    }
+  } else if (textareaRef.value) {
     const text = uiStore.showCharacterMotionText
       ? line + '\n' + uiStore.showCharacterMotionText
       : line
-    if (inlineDisplayRef.value) writeInlineHtml(inlineDisplayRef.value, text)
-  } else if (textareaRef.value) {
-    textareaRef.value.value = line
-    inputMessage.value = line // 与 v-model 同步，防止重渲染把值重置为空
+    textareaRef.value.value = text
+    inputMessage.value = text // 与 v-model 同步，防止重渲染把值重置为空
   }
 }
 
@@ -538,7 +625,8 @@ const {
   currentDisplayedText.value = text
 })
 
-// 内联模式 TypeWriter（div + HTML 混色渲染）
+// 内联模式 TypeWriter（div + charReveal 逐字符路由渲染；逐字符渲染由 charReveal 负责，
+// appendTyping 用于台词合并续打）
 const {
   startTyping: startInlineTyping,
   stopTyping: stopInlineTyping,
@@ -550,7 +638,7 @@ const {
   (text) => {
     currentDisplayedText.value = text
   },
-  writeInlineHtml,
+  charReveal.writeFn,
 )
 
 // 统一 isTyping（父组件通过 defineExpose 使用）
@@ -685,24 +773,48 @@ watch([() => uiStore.showCharacterLine, () => gameStore.currentStatus], ([newLin
     if (dialogueMerge.armed) {
       dialogueMerge.armed = false
       if (settingsStore.text.inlineMotionText) {
-        appendInlineTyping(' ' + newLine)
+        // 合并续打（内联模式）：把 i+1 的台词/动作并入 segments，台词走 appendTyping、
+        // 动作区由独立动作打字机接续/重打。segments 在新段 push 前记账 hadPriorMotion。
+        const newSegs: DisplaySegment[] = []
+        const appendMerged = (kind: DisplaySegment['kind'], text: string, separator: string) => {
+          const hasPrior = segments.some((s) => s.kind === kind)
+          newSegs.push({ kind, text: hasPrior ? separator + text : text })
+        }
+        appendMerged('dialogue', newLine, ' ')
+        const hadPriorMotion = segments.some((s) => s.kind === 'motion')
+        const motionText = uiStore.showCharacterMotionText
+        if (settingsStore.text.mergeMotionMode === 'replace') {
+          // 独立显示模式：清掉旧动作段，只保留本次动作（无动作则动作区清空）
+          segments = segments.filter((s) => s.kind !== 'motion')
+          if (motionText) newSegs.push({ kind: 'motion', text: motionText })
+          stopMotionTyping()
+          if (motionText) startMotionTyping(motionText, uiStore.typeWriterSpeed)
+        } else if (motionText) {
+          // 接在后面显示：动作段之间用 | 分隔，动作区接续打字
+          appendMerged('motion', motionText, ' | ')
+          if (hadPriorMotion) appendMotionTyping(' | ' + motionText)
+          else startMotionTyping(motionText, uiStore.typeWriterSpeed)
+        }
+        segments.push(...newSegs)
+        appendInlineTyping(typedText(newSegs))
       } else {
         appendTextTyping(' ' + newLine)
       }
       dialogueMerge.mergedLength += newLine.length
       rearmNextMerge(newLine)
     } else {
-      // 全新台词：重置显示区 + 从 0 打字
+      // 全新台词：重置显示区 + 从 0 打字（内联模式台词与动作区井行逐字打字）
       inputMessage.value = ''
       currentDisplayedText.value = ''
       isShowingMotionText.value = false
 
-      // 内联模式：始终用 div 渲染（有动作文本时拼接换行+灰字，无则仅白字）
       if (settingsStore.text.inlineMotionText) {
-        const text = uiStore.showCharacterMotionText
-          ? newLine + '\n' + uiStore.showCharacterMotionText
-          : newLine
-        startInlineTyping(text, uiStore.typeWriterSpeed)
+        segments = buildSegments(newLine)
+        resetResponseDisplay()
+        startInlineTyping(typedText(), uiStore.typeWriterSpeed)
+        if (uiStore.showCharacterMotionText) {
+          startMotionTyping(uiStore.showCharacterMotionText, uiStore.typeWriterSpeed)
+        }
       } else {
         startTextTyping(newLine, uiStore.typeWriterSpeed)
       }
@@ -712,10 +824,12 @@ watch([() => uiStore.showCharacterLine, () => gameStore.currentStatus], ([newLin
   } else if (newStatus === 'input') {
     stopTextTyping()
     stopInlineTyping()
+    stopMotionTyping()
     isShowingMotionText.value = false
     inputMessage.value = ''
     currentDisplayedText.value = ''
     dialogueMerge.mergedLength = 0
+    segments = []
   }
 })
 
@@ -1080,6 +1194,20 @@ defineExpose({
     padding-bottom: 4px;
     margin-top: 2px;
     border-top-width: 1px;
+  }
+}
+</style>
+
+<style>
+/* 逐字符淡入+上浮动画。keyframes 必须全局：span 由 JS 动态生成，scoped 选择器无法命中 */
+@keyframes tw-char-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.35em);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 </style>
