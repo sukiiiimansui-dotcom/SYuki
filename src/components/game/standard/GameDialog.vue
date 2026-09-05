@@ -428,6 +428,7 @@ import { useTypeWriter } from '../../../composables/ui/useTypeWriter'
 import { useDialogAppearance } from '../../../composables/useDialogAppearance'
 import { escapeHtml } from '../../../utils/escapeHtml'
 import { eventQueue } from '../../../core/events/event-queue'
+import { dialogueMerge } from '../../../core/events/dialogue-merge'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { setInputHasText } from '../../../composables/useCanDeliver'
@@ -532,6 +533,7 @@ const {
   startTyping: startTextTyping,
   stopTyping: stopTextTyping,
   isTyping: isTextTyping,
+  appendTyping: appendTextTyping,
 } = useTypeWriter(textareaRef, (text) => {
   currentDisplayedText.value = text
 })
@@ -542,6 +544,7 @@ const {
   stopTyping: stopInlineTyping,
   isTyping: isInlineTyping,
   finishTyping: finishInlineTyping,
+  appendTyping: appendInlineTyping,
 } = useTypeWriter(
   inlineDisplayRef,
   (text) => {
@@ -633,6 +636,8 @@ const isInputEnabled = computed(() => gameStore.currentStatus === 'input')
 watch(
   () => gameStore.currentStatus,
   (newStatus) => {
+    // 离开回应状态（input/presenting/error 等）→ 取消未消费的合并武装
+    if (newStatus !== 'responding') dialogueMerge.armed = false
     console.log('游戏状态变为 :', newStatus)
     if (newStatus === 'thinking') {
       const currentInteractRole = gameStore.currentInteractRole
@@ -654,20 +659,55 @@ watch(
   },
 )
 
+// 链式合并：刚追加的这行（appendedLine）若仍满足合并条件、且队头下一条是
+// 同角色短句回复，就继续武装——使 MainChat 在这行展示完成后自动推进下一条也走
+// 追加路径。解决快速连发时 i+2/i+3 在 i+1 处理前就入队、被 addEvent 的队列守卫
+// 挡住、导致最多只融合两句的问题。
+function rearmNextMerge(appendedLine: string) {
+  if (!settingsStore.text.inlineMotionText || settingsStore.text.mergeLineThreshold <= 0) {
+    return
+  }
+  const next = eventQueue.peek()
+  if (!next || next.type !== 'reply') return
+  if (next.roleId !== gameStore.currentInteractRoleId) return
+  if (dialogueMerge.mergedLength + next.message.length > settingsStore.text.mergeLineThreshold)
+    return
+
+  dialogueMerge.armed = true
+  dialogueMerge.armedRoleId = next.roleId
+}
+
 watch([() => uiStore.showCharacterLine, () => gameStore.currentStatus], ([newLine, newStatus]) => {
   if (newLine && newLine !== '' && newStatus === 'responding') {
-    inputMessage.value = ''
-    currentDisplayedText.value = ''
-    isShowingMotionText.value = false
-
-    // 内联模式：始终用 div 渲染（有动作文本时拼接换行+灰字，无则仅白字）
-    if (settingsStore.text.inlineMotionText) {
-      const text = uiStore.showCharacterMotionText
-        ? newLine + '\n' + uiStore.showCharacterMotionText
-        : newLine
-      startInlineTyping(text, uiStore.typeWriterSpeed)
+    // 合并续打：i+1 到达时 event-queue 已武装（i 仍打字/播音频），MainChat 在 i
+    // 展示完成后自动推进队列，这里对 i+1 走追加路径——不重置显示区、续打新增文本。
+    // 同一容器里已有内容时，新句前加空格隔离，避免两句黏在一起。
+    if (dialogueMerge.armed) {
+      dialogueMerge.armed = false
+      if (settingsStore.text.inlineMotionText) {
+        appendInlineTyping(' ' + newLine)
+      } else {
+        appendTextTyping(' ' + newLine)
+      }
+      dialogueMerge.mergedLength += newLine.length
+      rearmNextMerge(newLine)
     } else {
-      startTextTyping(newLine, uiStore.typeWriterSpeed)
+      // 全新台词：重置显示区 + 从 0 打字
+      inputMessage.value = ''
+      currentDisplayedText.value = ''
+      isShowingMotionText.value = false
+
+      // 内联模式：始终用 div 渲染（有动作文本时拼接换行+灰字，无则仅白字）
+      if (settingsStore.text.inlineMotionText) {
+        const text = uiStore.showCharacterMotionText
+          ? newLine + '\n' + uiStore.showCharacterMotionText
+          : newLine
+        startInlineTyping(text, uiStore.typeWriterSpeed)
+      } else {
+        startTextTyping(newLine, uiStore.typeWriterSpeed)
+      }
+      dialogueMerge.mergedLength = newLine.length
+      rearmNextMerge(newLine)
     }
   } else if (newStatus === 'input') {
     stopTextTyping()
@@ -675,7 +715,13 @@ watch([() => uiStore.showCharacterLine, () => gameStore.currentStatus], ([newLin
     isShowingMotionText.value = false
     inputMessage.value = ''
     currentDisplayedText.value = ''
+    dialogueMerge.mergedLength = 0
   }
+})
+
+// 同步打字状态给合并判定（event-queue.addEvent 在 i+1 到达时读取）
+watch(isTyping, (t) => {
+  dialogueMerge.isTyping = t
 })
 
 // 内联模式 div 可见时自动聚焦，确保 Enter 键能推进对话

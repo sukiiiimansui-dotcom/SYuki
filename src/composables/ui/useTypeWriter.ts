@@ -20,6 +20,11 @@ export function useTypeWriter(
   const init = () => {
     if (elementRef.value && !typeWriter.value) {
       typeWriter.value = new TypeWriter(elementRef.value, onTextUpdate, undefined, writeFn)
+      // 台词合并续打：append() 复用原 start() 的打字循环，原 promise 早已 resolve，
+      // 结束信号只能靠 onFinish 同步（自然完成 / 点击跳过都会触发）。
+      typeWriter.value.onFinish(() => {
+        localStatus.value = 'completed'
+      })
     }
   }
 
@@ -52,6 +57,16 @@ export function useTypeWriter(
     localStatus.value = typeWriter.value?.status ?? 'completed'
   }
 
+  /**
+   * 追加文本续打（台词合并：i+1 句到达后接续到当前打字目标末尾）。
+   * 不等新 promise——原 start() 的 promise 已 resolve，续打完成靠 onFinish 同步。
+   */
+  const appendTyping = (text: string) => {
+    if (!typeWriter.value) return
+    typeWriter.value.append(text)
+    localStatus.value = typeWriter.value.status
+  }
+
   onUnmounted(() => {
     typeWriter.value?.destroy()
     typeWriter.value = null
@@ -61,6 +76,7 @@ export function useTypeWriter(
     startTyping,
     stopTyping,
     finishTyping,
+    appendTyping,
     isTyping,
     status,
   }
