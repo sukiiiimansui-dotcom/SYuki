@@ -7,8 +7,8 @@
 > 基于开源 [LingChat](https://github.com/SlimeBoyOwO/LingChat)（Tauri 2 + Vue 3 + Rust）深度改造，
 > 把 SYuki 的差异化能力搬进 LingChat 原生体系。
 
-[![OS](https://img.shields.io/badge/OS-Android%20APK%20only-blue?style=flat-square)](https://github.com/sukiiiimansui-dotcom/SYuki/releases/tag/v0.1.0)
-[![Release](https://img.shields.io/badge/Release-v0.1.0%20(pre--alpha%2C%20many%20bugs)-red?style=flat-square)](https://github.com/sukiiiimansui-dotcom/SYuki/releases/tag/v0.1.0)
+[![OS](https://img.shields.io/badge/OS-Android%20APK%20only-blue?style=flat-square)](https://github.com/sukiiiimansui-dotcom/SYuki/releases/tag/v0.1.2)
+[![Release](https://img.shields.io/badge/Release-v0.1.2%20(pre--alpha%2C%20many%20bugs)-red?style=flat-square)](https://github.com/sukiiiimansui-dotcom/SYuki/releases/tag/v0.1.2)
 [![Rust](https://img.shields.io/badge/Backend-Rust-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Vue](https://img.shields.io/badge/Frontend-Vue3+-green?style=flat-square&logo=vuedotjs)](https://vuejs.org/)
 
@@ -34,7 +34,7 @@
 
 > ⚠️ **平台说明：目前仅提供 Android APK，iOS / Windows / Linux / macOS 等平台暂未提供**（受技术、版权、发布与分发流程等因素限制）。跨平台适配与发布尚未打通。
 
-- **v0.1.0（pre-alpha，含大量 bug，仅作尝鲜）** → [GitHub Release](https://github.com/sukiiiimansui-dotcom/SYuki/releases/tag/v0.1.0) · 资产 `SYuki-v0.1.0-universal.apk`（universal 全 ABI，已签名、可安装）
+- **v0.1.2（pre-alpha，含大量 bug，仅作尝鲜）** → [GitHub Release](https://github.com/sukiiiimansui-dotcom/SYuki/releases/tag/v0.1.2) · 资产 `SYuki-v0.1.2-universal.apk`（universal 全 ABI，已签名、可安装）
 - 安装包与说明见 [`RELEASE_NOTES.md`](RELEASE_NOTES.md)（含已知问题 / 平台说明）。
 - 反馈 / 提 issue → [Issues](https://github.com/sukiiiimansui-dotcom/SYuki/issues)；当前为快速迭代 pre-alpha，接口 / 存储可能随时变动。
 
