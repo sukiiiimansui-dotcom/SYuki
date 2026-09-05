@@ -66,8 +66,11 @@ LingChat 原生已内置：角色卡换装 / 立绘、剧本引擎（多事件 +
 6. **🧠 记忆可视化（本批新增）**：记忆图谱 · **无限沙盒**（自由缩放/拖动）· **分层视图**（L1 近期 / L2 长期 / L3 用户 / L4 约定 4 大球 + 食物链方向连线）· **点大球展开该层记忆** · **点记忆球查看「关联最强 Top-4」浮窗** · **类别卡片**（长条区块点击展开）· **情绪雷达**（五维心情 + 时间线）· **小窗悬浮**（可拖拽 / 最小化 / 全屏）。
 7. **📈 主动状态可视化 + 心跳/主动专用日志**：AI 是否在想念（运行状态 / 想念次数 / 兴趣值 / 当前感知 / 待投放队列），主动事件写入 `data/log/heartbeat/heartbeat_YYYYMMDD.log`。
 8. **⚡ 演出流畅度（本批移植）**：消息合并 + 事件队列调度优化 —— 同角色连续短句自动合并续打、AUTO 与台词合并共用单管道调度，减少切句闪断/卡顿。位置：`src/core/events/dialogue-merge.ts`（合并状态）、`src/core/events/event-queue.ts`（武装判定+队列）、`src/components/views/MainChat.vue`（自动推进/合并调度）、`src/components/game/standard/GameDialog.vue`（合并追加显示）、`src/stores/modules/settings/index.ts`（`mergeLineThreshold/mergeLineDelay/autoAdvanceDelay` 配置）。
+9. **🎙️ 语音输入 ASR（本批移植）**：手动麦克风 + 自动监听；统一采集/识别/流式（VAD 端点检测 + 多 provider），识别结果填入输入框；设置含 `voice_input_enabled` 总开关。位置：`src/composables/useAsrInput.ts`（统一采集+识别）、`src/api/services/asr.ts`（后端命令封装）、`src/stores/modules/settings/asr.ts`（ASR 设置 store）、`src/components/game/standard/GameDialog.vue`（mic 按钮）、Rust `src-tauri/src/ai_service/asr/` + `src-tauri/src/api/asr.rs`。
 
 > 所有移植功能的开关都已注册进设置界面（`config/tree.rs` → 设置面板「高级设置」），像 LingChat 原生功能一样可开可关。
+
+> 📌 **本批仍在进行（未合入 main）**：设置页重写（`task/settings-dev`）、台词融合+动作优化 / web 投影（`task/dialogue-dev`）——均在各独立分支，完成后合入并同步更新本页。
 
 ---
 
