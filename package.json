@@ -11,7 +11,7 @@
     "tauri": "tauri",
     "android:prepare": "tauri android init && node scripts/generate-android-icons.mjs",
     "android:dev": "tauri android dev",
-    "android:build": "node scripts/prepare-bundled-resources.mjs 9 && tauri android build --target aarch64 --target armv7"
+    "android:build": "node scripts/prepare-bundled-resources.mjs 9 && tauri android build --target aarch64 --apk"
   },
   "dependencies": {
     "7zip-min": "^3.0.1",
