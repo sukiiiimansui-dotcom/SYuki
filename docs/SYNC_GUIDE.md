@@ -48,3 +48,28 @@
 | 冲突 | 结构不同到处冲突 | 仅我们功能文件可能冲突 |
 | 前期成本 | 无 | 一次性结构迁移 |
 | 长期可维护性 | 低（差距会越拉越大） | 高 |
+
+## 5. 多频道模型（本项目采用，一劳永逸）
+
+GitHub 分支即"频道"，各频道互不干扰、保留 main：
+
+| 频道 | 内容 | 角色 |
+|---|---|---|
+| `main` | 当前稳定版（旧结构 + 我们功能） | 稳定/可发布 |
+| `channel/upstream` | **官方上游(LingChat 0.5.1) + 我们功能**（migration-official 基线） | 前卫频道：全面领先官方 |
+
+### 为什么这样最好
+- **不用 force-push main**（main 历史保留、可随时回滚）。
+- `channel/upstream` 按官方结构组织：
+  - 官方 0.5.1 全部功能（治卡/ASR/设置页/台词融合/web投影/0.1.2增强等）**自动内置**（upstream 自带）——无需手工搬运。
+  - 我们独有功能（记忆/主动/网易云/B站/情绪雷达等）作为**薄层叠加上去**。
+- **未来官方更新**：在 `channel/upstream` 上 `git fetch upstream && git rebase upstream/main`（结构相同→自动合并），极少冲突。同步后 `main` 保持不动。
+
+### 日常操作
+- 看前卫功能/体验官方新特性 → `channel/upstream`。
+- 看稳定版 → `main`。
+- 官方更新同步 → 在 `channel/upstream` 上 `bash _upstream_sync.sh rebase`。
+- 确认稳定后，把 `channel/upstream` 的关键成果 cherry-pick / merge 回 `main`（人工审查）。
+
+### 约束
+- channel/upstream 不覆盖/不删我们的独有功能；不 force-push main。
