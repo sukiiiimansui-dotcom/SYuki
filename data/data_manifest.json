@@ -1,10 +1,6 @@
 {
   "data_version": 1,
   "files": {
-    ".gitkeep": {
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "size": 0
-    },
     "game_data/backgrounds/占卜摊2.webp": {
       "sha256": "4aa14b3fc1eb457825ca4bba68106ea759dfa5e09f70a961640fe0cda215384d",
       "size": 795080
@@ -274,8 +270,8 @@
       "size": 602534
     },
     "game_data/characters/诺一钦灵/settings.yml": {
-      "sha256": "7714c0418acaa5116296ea27ae05b2d72d187287509325afc191c548c5d00ac5",
-      "size": 5420
+      "sha256": "1b2136304946bc726253baeb94bdf3ba9d1a863a43aecc0ff8c63c6369017d04",
+      "size": 5496
     },
     "game_data/characters/风雪/avatar/伤心.webp": {
       "sha256": "0719a7a593794161598d74b16819f81e8ab724c038d385c0c85039afa5dd0465",
@@ -369,126 +365,6 @@
       "sha256": "00c0f86820720f85d61b357c4b76a95912cd359dc0c9db04b3c605b0947c830b",
       "size": 2906253
     },
-    "game_data/scripts/character/诺一钦灵/小狼的爱好/Chapters/Intro/intro.yaml": {
-      "sha256": "a6f317e7b04ca95fb77cb21ba8d2bbae7b7bb079a5b48fbca219f798a9e2d917",
-      "size": 442
-    },
-    "game_data/scripts/character/诺一钦灵/小狼的爱好/Chapters/Intro/intro2.yaml": {
-      "sha256": "f83da54c4bcee2e762b392c7298112cce3754d34499e3699cb2a538f769147b8",
-      "size": 1022
-    },
-    "game_data/scripts/character/诺一钦灵/小狼的爱好/story_config.yaml": {
-      "sha256": "4169cb198057080b61ba9249b986cbafbc134f02a49b834b7917983e7a07075d",
-      "size": 577
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Assets/Backgrounds/公园小卖部_夕阳.webp": {
-      "sha256": "b7ef0fe5c55229f19e4dbad26507498c16cb1fa427913fb460c6130902dbc546",
-      "size": 505056
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Assets/Backgrounds/公园小卖部_晚上.webp": {
-      "sha256": "b5b9ee299c053b6bac8ddad00ab6f1d2a851e8decd31439005794cad3e909a0b",
-      "size": 383298
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Assets/Backgrounds/夜晚.webp": {
-      "sha256": "123de0abe047b5d8f3e74565f8346fa00f19e763d6c044ccf766c799ddca9643",
-      "size": 214336
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Assets/Backgrounds/春天的公园_晚上.webp": {
-      "sha256": "9dfad00a15cabc01b1be03055f3d687f20ec2ad94c5fe3126f1192e7c181bb66",
-      "size": 608666
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Assets/Backgrounds/春天的公园_白天.webp": {
-      "sha256": "10b52b1acdc6e0aad9e91b6aa011420adce3cb2675ea349ab01a7965a605ec1a",
-      "size": 579232
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Assets/Backgrounds/河畔堤坝步道_晚上.webp": {
-      "sha256": "718325ed20900cd842ae3bcc63775e74362d1f9979a2de10398e6fc596f26aea",
-      "size": 320804
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Chapters/final.yaml": {
-      "sha256": "286e9ccb73818a6f876c4ca7dbddc47dd3bb7fa473375bfd2ce8180595efe8a5",
-      "size": 690
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Chapters/main.yaml": {
-      "sha256": "7897e6e2bba5ff9a44537473152d2e960c7f9b96593710b70b59877b8d73c623",
-      "size": 830
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Chapters/main2.yaml": {
-      "sha256": "f2d034a3784824711e3dfb85621a56f09487759585a2019133331225a89108eb",
-      "size": 1016
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Chapters/main3.yaml": {
-      "sha256": "0aa0fce5e9cf73784e6c7a287dab482ce8d34828ebe904edee1ea5ed9928f61e",
-      "size": 1218
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/Chapters/main4.yaml": {
-      "sha256": "bb75cadabdd071ec65e8d8ff8bfd1f8fc231ab12eb6ddb5ab7d31f13b051b494",
-      "size": 1224
-    },
-    "game_data/scripts/character/诺一钦灵/想出去玩啦/story_config.yaml": {
-      "sha256": "70f1f1599f1d4bdc7c60fd35ecd964f83ef21c493856a57479f4c75694b4799b",
-      "size": 679
-    },
-    "game_data/scripts/character/诺一钦灵/钦灵黄油/Chapters/Intro/intro.yaml": {
-      "sha256": "2f453cb456bb8a49542ebc9d4666528f4ea80f41b0a4edd7aa72d3704cadd1b1",
-      "size": 1726
-    },
-    "game_data/scripts/character/诺一钦灵/钦灵黄油/Chapters/Intro/intro2.yaml": {
-      "sha256": "f83da54c4bcee2e762b392c7298112cce3754d34499e3699cb2a538f769147b8",
-      "size": 1022
-    },
-    "game_data/scripts/character/诺一钦灵/钦灵黄油/story_config.yaml": {
-      "sha256": "2e383994a6b903dcda6fd1ba4bd81f6e47155426d46cc272c4acf10ac759ba0b",
-      "size": 880
-    },
-    "game_data/scripts/character/风雪/神秘の魔法药水/Chapters/main.yaml": {
-      "sha256": "a25c64be228f9580abef3c6f918ac27c2ea15e966664e45e4dd60dc85d63cc75",
-      "size": 3178
-    },
-    "game_data/scripts/character/风雪/神秘の魔法药水/story_config.yaml": {
-      "sha256": "a5e4527c74e9386ff761262ba096c70442b33bc8816ea7ea9fb1b31caa2b80e5",
-      "size": 681
-    },
-    "game_data/scripts/character/风雪/自己做饭才香哦/Assets/Backgrounds/超市.webp": {
-      "sha256": "2fe9664bd361bc720e50d97bbad2bb9dcc97549bd99167123defa38bbc922164",
-      "size": 334586
-    },
-    "game_data/scripts/character/风雪/自己做饭才香哦/Assets/Backgrounds/风雪家厨房.webp": {
-      "sha256": "5760df29c10bf2078b7c67eb50960536e000ba012255c3fbe25bfd5383f2e580",
-      "size": 711528
-    },
-    "game_data/scripts/character/风雪/自己做饭才香哦/Chapters/final.yaml": {
-      "sha256": "79ffdd67f22d457e04e0c90c161ae1be426381a027dc9ceab238a8561d3913b1",
-      "size": 486
-    },
-    "game_data/scripts/character/风雪/自己做饭才香哦/Chapters/main.yaml": {
-      "sha256": "137aa61ea3a97e253b39684f58d470139f1a030ad113fcf92ec37393bcade551",
-      "size": 1858
-    },
-    "game_data/scripts/character/风雪/自己做饭才香哦/Chapters/main2.yaml": {
-      "sha256": "01781cbdd445a9b1212a89b97e3b46c352b04e8d0003263cf33987e6515b6869",
-      "size": 2235
-    },
-    "game_data/scripts/character/风雪/自己做饭才香哦/Chapters/main3.yaml": {
-      "sha256": "459488ab6f7d0733d7f38d4197c6aaf8c3236eef422530c31d9d57da3e001de4",
-      "size": 1252
-    },
-    "game_data/scripts/character/风雪/自己做饭才香哦/Chapters/main4.yaml": {
-      "sha256": "7779a314ccf24dbcb5ae621c80acd59fb54f01958e728fdb97c1cc63aab7c3a3",
-      "size": 1457
-    },
-    "game_data/scripts/character/风雪/自己做饭才香哦/story_config.yaml": {
-      "sha256": "f66b47d9ebc522216334523b2addfd8a3558e100866a07e11f8c3e2e989cf619",
-      "size": 672
-    },
-    "game_data/scripts/character/风雪/试着仰望星空/Chapters/main.yaml": {
-      "sha256": "02084c6568fa7370316a1a132f8590a812e001ff05ae25d00d0ad31104d35912",
-      "size": 1196
-    },
-    "game_data/scripts/character/风雪/试着仰望星空/story_config.yaml": {
-      "sha256": "78a4262e58ada3dc6d2082303fbf5d1f39bee7644f56335e694e1cacb936a668",
-      "size": 573
-    },
     "game_data/skills/file-operations/SKILL.md": {
       "sha256": "982386d00374c045da416914f6bc31f3565843d6124369760d835dfd7f674225",
       "size": 1680
@@ -540,46 +416,6 @@
     "game_data/skills/my-first-skill/references/skill-format.md": {
       "sha256": "5684aa005c5ee59d3991537440840c9dd8db221a89c925727fa0022d4b8aa0ef",
       "size": 1668
-    },
-    "plugins/tavily/manifest.toml": {
-      "sha256": "8d2b41058f7b46e6ba92ecf8555e0fbcc9abc7d5501be209f62d2cf4ad8426cf",
-      "size": 897
-    },
-    "plugins/tavily/tavily.py": {
-      "sha256": "0770d917e0e1437265f76abebe41d0d3ce3288a32762372f1f5280a4d47c9c36",
-      "size": 2255
-    },
-    "third_party/emotion_model_19emo/.gitkeep": {
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "size": 0
-    },
-    "third_party/emotion_model_19emo/config.json": {
-      "sha256": "9a21a331287d6ad019ff6735bbc8126175c8d3626b829d45d0df64d70567b396",
-      "size": 1853
-    },
-    "third_party/emotion_model_19emo/label_mapping.json": {
-      "sha256": "925c356c9a692e8d6a0466cc8d1bc0d40c40cf0ccc5b59695916d925319d4a78",
-      "size": 750
-    },
-    "third_party/emotion_model_19emo/model.onnx": {
-      "sha256": "677b784abed285d22532df725b8e1947957a1d254b0c899a37a4a93a2a5b473e",
-      "size": 60004728
-    },
-    "third_party/emotion_model_19emo/special_tokens_map.json": {
-      "sha256": "5d5b662e421ea9fac075174bb0688ee0d9431699900b90662acd44b2a350503a",
-      "size": 695
-    },
-    "third_party/emotion_model_19emo/tokenizer.json": {
-      "sha256": "7dfbf1966ebf99d471c3796e9b457329d2b2182b817e144f1e904b957745c839",
-      "size": 439124
-    },
-    "third_party/emotion_model_19emo/tokenizer_config.json": {
-      "sha256": "05c5cc2a08454cf87fd65f01ef66067b8bcf2401ba7658febd4039bf2b085380",
-      "size": 1321
-    },
-    "third_party/emotion_model_19emo/vocab.txt": {
-      "sha256": "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c",
-      "size": 109540
     }
   }
 }
