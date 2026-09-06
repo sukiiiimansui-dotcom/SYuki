@@ -8,6 +8,7 @@ pub mod types;
 pub mod visual_monitor;
 
 use sea_orm::DatabaseConnection;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -53,6 +54,11 @@ pub struct ProactiveSystem {
     loop_handle: Option<JoinHandle<()>>,
     is_running: bool,
 
+    /// `config.enable_proactive_system` 的无锁镜像。循环头用 AtomicBool 提前短路：
+    /// 关闭时每次 tick 不再无条件抢 3 把锁（Mutex<Self> + ai_service + game_status），
+    /// 避免出厂默认关闭时空转抢锁。reload() 时同步更新。
+    enabled: Arc<AtomicBool>,
+
     /// 前端上报的“当前是否适合投放主动对话”。
     /// 条件：用户在聊天界面(/chat 或 /pet) 且 设置面板未打开 且 输入框为空。
     can_deliver: bool,
@@ -77,6 +83,8 @@ impl ProactiveSystem {
         generation_lock: Arc<Mutex<()>>,
     ) -> Self {
         let config = ProactiveConfig::load(&app);
+        // 在把 config 移入结构体之前，先读镜像开关，避免 move 后再读。
+        let enabled = Arc::new(AtomicBool::new(config.enable_proactive_system));
         let interest_manager = InterestManager::new(config.max_proactive_times);
         let activity_monitor = UserActivityMonitor::new();
         let visual_monitor = VisualMonitor::new();
@@ -99,6 +107,7 @@ impl ProactiveSystem {
             strategy_dispatcher,
             loop_handle: None,
             is_running: false,
+            enabled,
             can_deliver: false,
             pending_intents: Vec::new(),
             last_user_interaction: std::time::Instant::now(),
@@ -121,6 +130,7 @@ impl ProactiveSystem {
         sys.load_schedule_settings().await;
 
         let sys_clone = system_arc.clone();
+        let sys_enabled = sys.enabled.clone();
         let handle = tokio::spawn(async move {
             tracing::info!("[ProactiveSystem] Loop task started.");
 
@@ -128,6 +138,12 @@ impl ProactiveSystem {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
+
+                // 无锁读：功能关闭时提前短路，不抢 3 把锁。此前每次 tick 都无条件
+                // 抢 Mutex<Self> + ai_service + game_status 三把锁后才判断 enable。
+                if !sys_enabled.load(Ordering::Relaxed) {
+                    continue;
+                }
 
                 // Grab locks safely to avoid blocking startup or chat interaction
                 let (enabled, is_script_active) = {
@@ -177,6 +193,9 @@ impl ProactiveSystem {
         self.strategy_dispatcher.update_config(&self.app);
         self.interest_manager
             .update_from_config(self.config.max_proactive_times);
+        // 同步无锁开关镜像，让循环头据此短路，无需抢锁。
+        self.enabled
+            .store(self.config.enable_proactive_system, Ordering::Relaxed);
         self.load_schedule_settings().await;
     }
 

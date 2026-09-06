@@ -276,9 +276,16 @@ impl GameRoleManager {
         lines: &[GameLine],
         recent_n: Option<usize>,
     ) -> Result<()> {
-        let source_lines: &[GameLine] = match recent_n {
-            Some(n) if n < lines.len() => &lines[lines.len() - n..],
-            _ => lines,
+        // 有界窗口：默认只取最近 `memory_recent_window` 条台词构建每个角色的记忆，
+        // 防止永久记忆关闭时 line_list/role.memory 随着历史无限膨胀（上下文无窗口）。
+        // recent_n 由调用方显式传入时以调用方为准；0 表示不设窗口（取全部）。
+        let window = recent_n
+            .or(Some(self.memory_recent_window as usize))
+            .unwrap_or(0);
+        let source_lines: &[GameLine] = if window > 0 && window < lines.len() {
+            &lines[lines.len() - window..]
+        } else {
+            lines
         };
         // 收集涉及到的角色 ID
         let mut involved_ids: HashSet<i32> = HashSet::new();
@@ -327,7 +334,10 @@ impl GameRoleManager {
                         if let Some(role) = self.loaded_roles.get_mut(&rid) {
                             s.sync_to_role(role);
                         }
-                        s.check_and_trigger_auto_update(source_lines);
+                        // 触发压缩必须传**完整** line_list：MemoryBank 用
+                        // `last_processed_global_idx` 在全局序列上推进指针，窗口裁剪
+                        // 会破坏其索引记账（把已压缩行误判为未处理）。
+                        s.check_and_trigger_auto_update(lines);
                         let start = s.get_slice_start_index().await;
                         let sys_text = s.get_system_memory_text().await;
                         let short = s.get_short_term_user_text().await;
@@ -339,17 +349,23 @@ impl GameRoleManager {
             };
 
             // 阶段 3: 裁剪 + 构建角色记忆
-            let sliced: Vec<GameLine> = if slice_start > 0 && slice_start < source_lines.len() {
-                source_lines[slice_start..].to_vec()
+            // MB 启用时 `slice_start` 是对**全局**序列的索引，须用完整 line_list 切片，
+            // 否则窗口偏移会破坏索引记账；MB 关闭（或 addendum 为空）时才用已按
+            // recent window 裁剪的 `source_lines`，避免 role.memory 无限膨胀。
+            let use_mb = mb_exists && mb_enabled && !system_addendum.is_empty();
+            let base: &[GameLine] = if use_mb { lines } else { source_lines };
+            let sliced: Vec<GameLine> = if slice_start > 0 && slice_start < base.len() {
+                base[slice_start..].to_vec()
             } else {
-                source_lines.to_vec()
+                base.to_vec()
             };
 
-            // 确保人设 SYSTEM 提示存在
+            // 确保人设 SYSTEM 提示存在。窗口裁剪可能把较早的人设行挤出 source_lines，
+            // 因此回退搜索用**完整** `lines`，避免人设丢失。
             let has_prompt = Self::find_first_system_prompt(&sliced, rid).is_some();
             let mut final_sliced = sliced;
             if !has_prompt {
-                if let Some(sp) = Self::find_first_system_prompt(source_lines, rid) {
+                if let Some(sp) = Self::find_first_system_prompt(lines, rid) {
                     final_sliced.insert(0, sp.clone());
                 } else {
                     tracing::warn!("role_id={} 没有找到 SYSTEM 属性的台词，可能人设丢失", rid);

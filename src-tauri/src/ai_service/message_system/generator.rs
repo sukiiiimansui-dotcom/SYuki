@@ -8,7 +8,8 @@
 //! 5. 每个段落作为 assistant LINE 入 GameStatus（带 TTS/动作/情绪）。
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use sea_orm::DatabaseConnection;
@@ -87,6 +88,32 @@ pub struct MessageGenerator {
     deps: GeneratorDeps,
 }
 
+/// `bili_knowledge.json` 的 mtime 缓存条目：文件未变时复用格式化结果。
+struct BiliContextCache {
+    mtime: Option<SystemTime>,
+    text: String,
+}
+
+static BILI_CONTEXT_CACHE: OnceLock<std::sync::Mutex<Option<BiliContextCache>>> = OnceLock::new();
+
+/// 读取并格式化 `bili_knowledge.json`（不含缓存逻辑，供缓存失效后重新解析）。
+fn parse_bili_context(path: &std::path::Path) -> Result<String> {
+    let content = std::fs::read_to_string(path)?;
+    let videos: Vec<crate::ai_service::bilibili_service::BiliVideo> =
+        serde_json::from_str(&content).unwrap_or_default();
+    let mut out = String::new();
+    for v in videos.iter().take(3) {
+        out.push_str(&format!(
+            "- 《{}》 UP: {} | 弹幕梗: {} | 高赞评论: {}\n",
+            v.title,
+            v.up,
+            if v.repeat_danmaku.is_empty() { "—".to_string() } else { v.repeat_danmaku.clone() },
+            if v.top_comments.is_empty() { "—".to_string() } else { v.top_comments.clone() },
+        ));
+    }
+    Ok(out)
+}
+
 impl MessageGenerator {
     pub fn new(deps: GeneratorDeps) -> Self {
         Self { deps }
@@ -104,6 +131,14 @@ impl MessageGenerator {
 
         // 1.5. 场景变化检测
         self.detect_scene_change().await?;
+
+        // 1.6. 用户行 + 场景旁白已追加（push_line 不刷新），统一刷一次记忆。
+        //     本轮生成循环的 get_current_context 需要看到这些行；同时把
+        //     「用户行触发一次刷新 + 场景行触发一次刷新」合并成一次，避免重复全量重建。
+        {
+            let mut gs = self.deps.game_status.lock().await;
+            gs.refresh_memories(&self.deps.db).await?;
+        }
 
         // 2. 上帝 Agent 预处理：用户发消息时，先决定谁回应
         if user_message.is_some() {
@@ -190,7 +225,9 @@ impl MessageGenerator {
             sender_role_id: Some(0),
             ..Default::default()
         };
-        gs.add_line(&self.deps.db, line).await?;
+        // 只追加不刷新：本轮所有台词提交后的唯一一次 refresh_memories 在
+        // process_message 里统一发生，避免用户行触发一次全量记忆重建。
+        gs.push_line(line);
         let line_index = Some(gs.line_list.len().saturating_sub(1));
         let seq = Some(
             gs.line_list
@@ -234,7 +271,7 @@ impl MessageGenerator {
                     display_name: Some("系统".to_string()),
                     ..Default::default()
                 };
-                let _ = gs.add_line(&self.deps.db, line).await;
+                gs.push_line(line);
             }
         }
         gs.last_processed_scene_id = gs.current_scene_id.clone();
@@ -275,25 +312,39 @@ impl MessageGenerator {
     }
 
     /// 读取 data/bili_knowledge.json 里最近学习的 B站视频（弹幕梗/高赞评论），格式化为文本。
+    ///
+    /// 每次 LLM 生成轮次都会调用。为避免每轮 `fs::read_to_string` + JSON 解析，
+    /// 结果按文件 mtime 缓存：文件未变时直接复用，变了才重新读取解析。
     fn build_bili_context() -> Result<String> {
         let path = crate::api::data_dir().join("bili_knowledge.json");
-        if !path.exists() {
-            return Ok(String::new());
+        let mtime = match std::fs::metadata(&path) {
+            Ok(m) => m.modified().ok(),
+            Err(_) => None, // 文件不存在 => 空上下文
+        };
+
+        let cache = BILI_CONTEXT_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+        match cache.lock() {
+            Ok(mut guard) => {
+                if let Some(cached) = guard.as_ref() {
+                    if cached.mtime == mtime {
+                        return Ok(cached.text.clone());
+                    }
+                }
+                let text = match mtime {
+                    Some(_) => parse_bili_context(&path)?,
+                    None => String::new(),
+                };
+                *guard = Some(BiliContextCache {
+                    mtime,
+                    text: text.clone(),
+                });
+                Ok(text)
+            }
+            Err(_) => match mtime {
+                Some(_) => parse_bili_context(&path),
+                None => Ok(String::new()),
+            },
         }
-        let content = std::fs::read_to_string(&path)?;
-        let videos: Vec<crate::ai_service::bilibili_service::BiliVideo> =
-            serde_json::from_str(&content).unwrap_or_default();
-        let mut out = String::new();
-        for v in videos.iter().take(3) {
-            out.push_str(&format!(
-                "- 《{}》 UP: {} | 弹幕梗: {} | 高赞评论: {}\n",
-                v.title,
-                v.up,
-                if v.repeat_danmaku.is_empty() { "—".to_string() } else { v.repeat_danmaku.clone() },
-                if v.top_comments.is_empty() { "—".to_string() } else { v.top_comments.clone() },
-            ));
-        }
-        Ok(out)
     }
 
     /// Step 3: 启动 LLM 流管道，统一处理 thinking emit 与错误分发。
@@ -592,43 +643,47 @@ impl MessageGenerator {
 
         // 流已消费完毕，工具消息收集完整：回填到助手回复之前的位置
         let tool_msgs = std::mem::take(&mut *tool_messages.lock().await);
-        if !tool_msgs.is_empty() {
+        {
             let mut gs = self.deps.game_status.lock().await;
             // 试玩代号守卫：试玩中止后丢弃迟到回填，与 add_assistant_line 行为一致
             if gs.preview_generation == self.deps.generation {
-                let insert_pos = tool_insert_pos.min(gs.line_list.len());
-                let perceived: Vec<i32> = gs.present_role_ids.iter().copied().collect();
+                if !tool_msgs.is_empty() {
+                    let insert_pos = tool_insert_pos.min(gs.line_list.len());
+                    let perceived: Vec<i32> = gs.present_role_ids.iter().copied().collect();
 
-                for msg in tool_msgs.iter().rev() {
-                    let (attribute, content, tool_call) = match msg.role.as_str() {
-                        "assistant" => {
-                            let tool_call = msg.tool_calls.as_ref().map(|calls| {
-                                serde_json::to_string(calls).unwrap_or_default()
-                            });
-                            (LineAttribute::Assistant, msg.content.clone(), tool_call)
-                        },
-                        "tool" => (
-                            LineAttribute::Tool,
-                            serde_json::to_string(&serde_json::json!({
-                                "tool_call_id": msg.tool_call_id,
-                                "result": serde_json::from_str::<serde_json::Value>(&msg.content)
-                                    .unwrap_or(serde_json::Value::String(msg.content.clone())),
-                            })).unwrap_or_default(),
-                            None,
-                        ),
-                        _ => continue,
-                    };
-                    let line = LineBase {
-                        content,
-                        tool_call,
-                        attribute: LineAttributeExt(attribute),
-                        sender_role_id: None,
-                        display_name: None,
-                        ..Default::default()
-                    };
-                    gs.line_list
-                        .insert(insert_pos, GameLine::from_base(line, perceived.clone()));
+                    for msg in tool_msgs.iter().rev() {
+                        let (attribute, content, tool_call) = match msg.role.as_str() {
+                            "assistant" => {
+                                let tool_call = msg.tool_calls.as_ref().map(|calls| {
+                                    serde_json::to_string(calls).unwrap_or_default()
+                                });
+                                (LineAttribute::Assistant, msg.content.clone(), tool_call)
+                            },
+                            "tool" => (
+                                LineAttribute::Tool,
+                                serde_json::to_string(&serde_json::json!({
+                                    "tool_call_id": msg.tool_call_id,
+                                    "result": serde_json::from_str::<serde_json::Value>(&msg.content)
+                                        .unwrap_or(serde_json::Value::String(msg.content.clone())),
+                                })).unwrap_or_default(),
+                                None,
+                            ),
+                            _ => continue,
+                        };
+                        let line = LineBase {
+                            content,
+                            tool_call,
+                            attribute: LineAttributeExt(attribute),
+                            sender_role_id: None,
+                            display_name: None,
+                            ..Default::default()
+                        };
+                        gs.line_list
+                            .insert(insert_pos, GameLine::from_base(line, perceived.clone()));
+                    }
                 }
+                // 本轮全部 assistant 句子已由 push_line 追加、工具消息已回填，统一刷一次记忆。
+                // （此前每条句子 add_line 都会触发一次 O(历史长度) 全量重建，一条消息 N+3 次。）
                 gs.refresh_memories(&self.deps.db).await?;
             }
         }
@@ -658,7 +713,6 @@ pub struct SentenceDeps {
     pub processor: Arc<MessageProcessor>,
     pub translator: Arc<Translator>,
     pub game_status: Arc<Mutex<GameStatus>>,
-    pub db: DatabaseConnection,
     /// 试玩代号（写入守卫用）。非试玩时传入当前值即可，守卫恒等。
     pub generation: u64,
     pub is_preview: bool,
@@ -670,7 +724,6 @@ impl From<&GeneratorDeps> for SentenceDeps {
             processor: d.processor.clone(),
             translator: d.translator.clone(),
             game_status: d.game_status.clone(),
-            db: d.db.clone(),
             generation: d.generation,
             is_preview: d.is_preview,
         }
@@ -928,6 +981,8 @@ async fn add_assistant_line(deps: &SentenceDeps, response: &ReplyResponse) -> Re
         ..Default::default()
     };
     let mut gs = deps.game_status.lock().await;
-    gs.add_line(&deps.db, line).await?;
+    // 只追加不刷新：本轮所有 assistant 句子均由 push_line 写入，run_pipeline 结束时
+    // 统一 refresh_memories 一次，避免每句台词各触发一次 O(历史长度) 的全量记忆重建。
+    gs.push_line(line);
     Ok(())
 }

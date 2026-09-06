@@ -99,11 +99,21 @@ impl GameStatus {
         self.role_manager.get_role(db, role_id).await
     }
 
-    /// 追加台词，记录当前在场者为感知列表，并刷新相关角色的记忆。
-    pub async fn add_line(&mut self, db: &DatabaseConnection, line: LineBase) -> Result<()> {
+    /// 只追加台词（记录当前在场者为感知列表），不刷新记忆。
+    ///
+    /// 供消息生成管线的**热路径**批量使用：流式生成的每句 assistant 台词全部
+    /// 提交完后，由调用方统一刷一次记忆，避免「每句台词各触发一次全量重建」
+    /// （一条消息原本会 N+3 次 O(历史长度) 重算）。其余既有调用方仍走
+    /// [`GameStatus::add_line`]（追加 + 刷新），行为不变。
+    pub fn push_line(&mut self, line: LineBase) {
         let perceived: Vec<i32> = self.present_role_ids.iter().copied().collect();
         let game_line = GameLine::from_base(line, perceived);
         self.line_list.push(game_line);
+    }
+
+    /// 追加台词，记录当前在场者为感知列表，并刷新相关角色的记忆。
+    pub async fn add_line(&mut self, db: &DatabaseConnection, line: LineBase) -> Result<()> {
+        self.push_line(line);
         self.refresh_memories(db).await?;
         Ok(())
     }
