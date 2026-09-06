@@ -153,7 +153,6 @@ impl ScriptEvent for DialogueEvent {
                 processor: state.chat.processor.clone(),
                 translator: state.chat.translator.clone(),
                 game_status: ctx.game_status.clone(),
-                db: ctx.db.clone(),
                 // 捕获当前试玩代号：中止后游离写入会被 add_assistant_line 的守卫丢弃
                 generation: ctx.game_status.lock().await.preview_generation,
                 is_preview: ctx.is_preview,
@@ -215,6 +214,13 @@ impl ScriptEvent for DialogueEvent {
                     .await?;
                 }
             }
+        }
+
+        // 所有固定台词已由 consume_sentence 的 push_line 追加（不逐句刷新，
+        // 见 add_assistant_line），这里统一刷一次记忆，避免每条台词一次全量重建。
+        {
+            let mut gs = ctx.game_status.lock().await;
+            gs.refresh_memories(ctx.db).await?;
         }
 
         Ok(None)

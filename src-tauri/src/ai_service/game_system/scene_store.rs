@@ -1,4 +1,7 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use serde::{de, Deserialize, Serialize};
@@ -234,6 +237,10 @@ pub struct SceneStore {
     path: PathBuf,
 }
 
+/// `scenes.json` 的按路径 mtime 缓存：场景切换/读取频繁，文件未变时复用解析结果，
+/// 避免每次切换场景都整文件 `read_to_string` + JSON 解析。
+static SCENES_CACHE: OnceLock<Mutex<HashMap<PathBuf, (SystemTime, Vec<Scene>)>>> = OnceLock::new();
+
 impl SceneStore {
     pub fn new(data_dir: &Path) -> Self {
         Self {
@@ -249,13 +256,33 @@ impl SceneStore {
     }
 
     pub fn load_all(&self) -> Result<Vec<Scene>> {
-        if !self.path.exists() {
+        let mtime = match std::fs::metadata(&self.path) {
+            Ok(m) => m.modified().ok(),
+            // 文件不存在 => 空列表。也用它作为缓存键（值为 None 时不缓存）。
+            Err(_) => return Ok(Vec::new()),
+        };
+        let Some(mtime) = mtime else {
             return Ok(Vec::new());
+        };
+
+        let cache = SCENES_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        // 先查缓存（命中直接复用，避免联网/磁盘 IO 与解析）。
+        {
+            let guard = cache.lock().unwrap();
+            if let Some((m, scenes)) = guard.get(&self.path) {
+                if *m == mtime {
+                    return Ok(scenes.clone());
+                }
+            }
         }
+
         let content = std::fs::read_to_string(&self.path)
             .with_context(|| format!("读取场景文件失败: {:?}", self.path))?;
         let scenes: Vec<Scene> = serde_json::from_str(&content)
             .with_context(|| format!("解析场景 JSON 失败: {:?}", self.path))?;
+
+        let mut guard = cache.lock().unwrap();
+        guard.insert(self.path.clone(), (mtime, scenes.clone()));
         Ok(scenes)
     }
 
@@ -264,6 +291,14 @@ impl SceneStore {
         let content = serde_json::to_string_pretty(scenes)?;
         std::fs::write(&self.path, content)
             .with_context(|| format!("写入场景文件失败: {:?}", self.path))?;
+        // 保存后刷新缓存条目（mtime 已变化），避免下次读回旧值。
+        if let Ok(m) = std::fs::metadata(&self.path) {
+            if let Ok(modified) = m.modified() {
+                let cache = SCENES_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+                let mut guard = cache.lock().unwrap();
+                guard.insert(self.path.clone(), (modified, scenes.to_vec()));
+            }
+        }
         Ok(())
     }
 

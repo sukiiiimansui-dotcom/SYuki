@@ -69,6 +69,10 @@ fn strip_jp_action_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"<[^>]*>|（[^）]*）").expect("invalid regex"))
 }
+fn content_braces_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\{[^{}]*\}").expect("invalid regex"))
+}
 
 /// MessageProcessor 配置。
 #[derive(Debug, Clone, Copy)]
@@ -199,8 +203,8 @@ impl MessageProcessor {
         let mut processed = text.to_string();
 
         // 3. 清理违规内容
-        // 删除 {} 内容
-        let curly_re = Regex::new(r"\{[^{}]*\}").unwrap();
+        // 删除 {} 内容（Regex 缓存为单例，避免每句 new 一次）
+        let curly_re = content_braces_re();
         processed = curly_re.replace_all(&processed, "").to_string();
 
         // 1. 统一括号风格

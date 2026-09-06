@@ -5,7 +5,7 @@
 //! - 标签映射：`label_mapping.json` -> `id2label` / `label2id`
 //! - 推理后端：`ort`（ONNX Runtime，与 Python 侧一致）
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -14,6 +14,9 @@ use ort::{session::Session, value::Tensor};
 
 const MAX_SEQ_LEN: usize = 128;
 const DEFAULT_CONFIDENCE_THRESHOLD: f32 = 0.08;
+/// 情绪标签 → 预测的 LRU 缓存容量。情绪标签是一小个封闭集合（几十个），
+/// 缓存后同一标签在一条消息的多条句子间被反复命中，避免反复对 ONNX Session 加锁推理。
+const EMOTION_CACHE_CAP: usize = 256;
 
 /// 情绪预测结果。对应 Python 版 `predict()` 返回 dict。
 #[derive(Debug, Clone)]
@@ -56,6 +59,53 @@ pub struct EmotionClassifier {
     cls_id: i64,
     sep_id: i64,
     pad_id: i64,
+    /// 情绪标签 → 预测 的 LRU 缓存。消除同一 tag 在同一轮/多条句子里被反复
+    /// `predict` 时对 ONNX Session 全局 Mutex 的串行重复推理。
+    cache: Mutex<EmotionCache>,
+}
+
+/// 有界的 tag → prediction LRU 缓存。
+struct EmotionCache {
+    map: HashMap<String, EmotionPrediction>,
+    /// recency 顺序：队首最新，队尾最旧（用于容量达到上限时淘汰）。
+    lru: VecDeque<String>,
+}
+
+impl EmotionCache {
+    fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+            lru: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, key: &str) -> Option<EmotionPrediction> {
+        let value = self.map.get(key).cloned()?;
+        // 命中后移到队首，维持 LRU 语义。
+        if let Some(pos) = self.lru.iter().position(|k| k.as_str() == key) {
+            let k = self.lru.remove(pos).expect("pos 一定存在");
+            self.lru.push_front(k);
+        }
+        Some(value)
+    }
+
+    fn put(&mut self, key: String, value: EmotionPrediction) {
+        if self.map.contains_key(&key) {
+            self.map.insert(key.clone(), value);
+            if let Some(pos) = self.lru.iter().position(|k| k.as_str() == key) {
+                let k = self.lru.remove(pos).expect("pos 一定存在");
+                self.lru.push_front(k);
+            }
+            return;
+        }
+        self.map.insert(key.clone(), value);
+        self.lru.push_front(key);
+        while self.lru.len() > EMOTION_CACHE_CAP {
+            if let Some(oldest) = self.lru.pop_back() {
+                self.map.remove(&oldest);
+            }
+        }
+    }
 }
 
 impl EmotionClassifier {
@@ -71,6 +121,7 @@ impl EmotionClassifier {
             cls_id: 101,
             sep_id: 102,
             pad_id: 0,
+            cache: Mutex::new(EmotionCache::new()),
         }
     }
 
@@ -146,6 +197,7 @@ impl EmotionClassifier {
             cls_id,
             sep_id,
             pad_id,
+            cache: Mutex::new(EmotionCache::new()),
         })
     }
 
@@ -154,7 +206,21 @@ impl EmotionClassifier {
     }
 
     /// 预测文本情绪。`confidence_threshold` 小于此值会返回 "不确定"。
+    ///
+    /// 带 tag → 预测的 LRU 缓存：同一情绪标签（如「调皮」「开心」）会被一条消息里
+    /// 的多个句子反复命中，命中时直接短路，避免对 ONNX Session 反复加锁推理。
     pub fn predict(&self, text: &str, confidence_threshold: Option<f32>) -> EmotionPrediction {
+        if let Some(cached) = self.cache.lock().ok().and_then(|mut c| c.get(text)) {
+            return cached;
+        }
+        let predicted = self.predict_inner(text, confidence_threshold);
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.put(text.to_string(), predicted.clone());
+        }
+        predicted
+    }
+
+    fn predict_inner(&self, text: &str, confidence_threshold: Option<f32>) -> EmotionPrediction {
         let threshold = confidence_threshold.unwrap_or(DEFAULT_CONFIDENCE_THRESHOLD);
         let Some(session) = self.session.as_ref() else {
             return EmotionPrediction::passthrough(text, true);
