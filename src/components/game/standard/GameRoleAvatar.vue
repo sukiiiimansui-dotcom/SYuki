@@ -141,8 +141,11 @@ const bubbleStyles = computed(() => ({
 const targetAvatarUrl = ref('')
 
 let resolveAvatarId = 0
+// 合并同一次 flush 内的重复 resolveAvatar：两个 watch（roleId/emotion/clothesName/folder + emotion）
+// 在同一 tick 都会触发 get_avatar_file（此前被调 2 次），这里用共享 in-flight promise 去重。
+let avatarResolvePromise: Promise<void> | null = null
 
-async function resolveAvatar() {
+async function actuallyResolveAvatar() {
   const r = role.value
   const clothesName = r.clothesName === '默认' || !r.clothesName ? 'default' : r.clothesName
   const emotion = r.emotion
@@ -162,7 +165,15 @@ async function resolveAvatar() {
     if (currentId === resolveAvatarId) {
       targetAvatarUrl.value = ''
     }
+  } finally {
+    avatarResolvePromise = null
   }
+}
+
+function resolveAvatar(): Promise<void> {
+  if (avatarResolvePromise) return avatarResolvePromise
+  avatarResolvePromise = actuallyResolveAvatar()
+  return avatarResolvePromise
 }
 
 watch(

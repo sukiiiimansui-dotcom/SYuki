@@ -62,6 +62,7 @@ import { useNetmusicStore } from '@/stores/modules/netmusic'
 
 const store = useNetmusicStore()
 const audioEl = ref<HTMLAudioElement | null>(null)
+let lastProgressUpdate = 0
 
 const currentUrl = computed(() => (store.current ? (store.current as any).url : ''))
 const progressPct = computed(() => {
@@ -75,10 +76,13 @@ const vol = computed({
 })
 
 function onTimeUpdate() {
-  if (audioEl.value) {
-    store.progress = audioEl.value.currentTime
-    store.duration = audioEl.value.duration || store.duration
-  }
+  if (!audioEl.value) return
+  // @timeupdate 约 4Hz；节流到 ~1Hz，降低 store.progress/duration 更新频率
+  const now = Date.now()
+  if (now - lastProgressUpdate < 1000) return
+  lastProgressUpdate = now
+  store.progress = audioEl.value.currentTime
+  store.duration = audioEl.value.duration || store.duration
 }
 
 function togglePlay() {

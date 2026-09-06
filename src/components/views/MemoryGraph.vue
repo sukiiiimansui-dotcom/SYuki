@@ -16,7 +16,7 @@
         <!-- 层与层：食物链主链 （L1→L2→L3→L4） -->
         <template v-for="(l, i) in LAYERS" :key="'chain'+i">
           <g v-if="i < LAYERS.length - 1">
-            <path v-for="(p, k) in chainArrow(l, LAYERS[i+1])" :key="k" :d="p.d" :fill="p.fill" :opacity="p.op" />
+            <path v-for="(p, k) in chainArrowCache[i]" :key="k" :d="p.d" :fill="p.fill" :opacity="p.op" />
           </g>
         </template>
 
@@ -30,20 +30,20 @@
           <circle class="hub-ring" :r="l.hubR" :fill="l.color" :stroke="l.ring" :stroke-width="activeLayer === l.key ? 3 : 1.5" />
           <text class="hub-label" y="-6">{{ l.short }}</text>
           <text class="hub-sub" y="12">{{ l.label }}</text>
-          <text class="hub-count" y="30">{{ nodeCount(l.key) }} 条</text>
+          <text class="hub-count" y="30">{{ nodeCountCache[l.key] ?? 0 }} 条</text>
         </g>
 
         <!-- 激活层的记忆小球 + 大球→小球 方向箭（食物链） -->
         <template v-if="activeLayer">
           <g v-for="n in activeNodes" :key="n.id">
-            <path v-for="(p, k) in linkArrow(hubFor(activeLayer), n)" :key="'a'+k" :d="p.d" :fill="p.fill" :opacity="p.op" />
+            <path v-for="(p, k) in linkArrowCache[n.id]" :key="'a'+k" :d="p.d" :fill="p.fill" :opacity="p.op" />
             <g
               class="mg-interactive node"
               :class="{ pick: selectedId === n.id, dim: selectedId !== null && selectedId !== n.id && !relatedIds.has(n.id) }"
               :transform="`translate(${n.x},${n.y})`" @click.stop="selectNode(n.id)"
             >
-              <circle :r="radius(n)" :fill="selectedId === n.id ? hubFor(activeLayer).color : '#fff'" :stroke="hubFor(activeLayer).ring" :stroke-width="selectedId === n.id ? 0 : 2" />
-              <text class="node-label" y="4">{{ short(n.text) }}</text>
+              <circle :r="radiusCache[n.id]" :fill="selectedId === n.id ? hubFor(activeLayer).color : '#fff'" :stroke="hubFor(activeLayer).ring" :stroke-width="selectedId === n.id ? 0 : 2" />
+              <text class="node-label" y="4">{{ shortCache[n.id] }}</text>
             </g>
           </g>
         </template>
@@ -106,6 +106,13 @@ const relatedIds = ref<Set<number>>(new Set())
 const related = ref<Related[]>([])
 const view = reactive({ s: 1, tx: 0, ty: 0 })
 const relPos = reactive({ x: 12, y: 44 })
+
+// ── 预计算缓存：渲染模板只读缓存，避免每帧调用 chainArrow/linkArrow/nodeCount/radius/short ──
+let chainArrowCache: Array<Array<{ d: string; fill: string; op: number }>> = []
+let linkArrowCache: Record<number, Array<{ d: string; fill: string; op: number }>> = {}
+let nodeCountCache: Record<string, number> = {}
+let shortCache: Record<number, string> = {}
+let radiusCache: Record<number, number> = {}
 
 // ── 构建节点（围绕各自大球径向排布） ──
 function sec(key: string): string { return (props.sections as Record<string, string>)[key] || '' }
@@ -177,6 +184,24 @@ function toggleLayer(key: string | null) {
 function hubFor(key: string) { return layerMap[key] }
 function nodeCount(key: string) { return split(sec(key)).length }
 
+// 预计算所有纯函数的输出并存进缓存（在 buildNodes 后调用一次）
+function buildCaches() {
+  chainArrowCache = []
+  for (let i = 0; i < LAYERS.length - 1; i++) {
+    chainArrowCache.push(chainArrow(LAYERS[i], LAYERS[i + 1]))
+  }
+  linkArrowCache = {}
+  for (const n of nodes) linkArrowCache[n.id] = linkArrow(layerMap[n.category], n)
+  nodeCountCache = {}
+  for (const l of LAYERS) nodeCountCache[l.key] = split(sec(l.key)).length
+  shortCache = {}
+  radiusCache = {}
+  for (const n of nodes) {
+    shortCache[n.id] = short(n.text)
+    radiusCache[n.id] = radius(n)
+  }
+}
+
 const activeNodes = computed(() => {
   if (!activeLayer.value) return []
   return nodes.filter((n) => n.category === activeLayer.value)
@@ -226,6 +251,23 @@ let pan = { active: false, x: 0, y: 0, tx: 0, ty: 0 }
 let pointers = new Map<number, { x: number; y: number }>()
 let pinchStart: { d: number; s: number } | null = null
 
+// rAF 节流：pointer/wheel 只记录目标 view，一帧只真正写一次 reactive view，
+// 把每帧重渲染整棵 SVG 子树的频率从「事件频率」压到「帧率」，并合并同帧多次事件。
+let pendingView: { tx: number; ty: number; s: number } | null = null
+let viewRafId: number | null = null
+function scheduleViewApply() {
+  if (viewRafId !== null) return
+  viewRafId = requestAnimationFrame(() => {
+    viewRafId = null
+    if (pendingView) {
+      view.tx = pendingView.tx
+      view.ty = pendingView.ty
+      view.s = pendingView.s
+      pendingView = null
+    }
+  })
+}
+
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
 function onPointerDown(e: PointerEvent) {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
@@ -240,12 +282,13 @@ function onPointerDown(e: PointerEvent) {
 function onPointerMove(e: PointerEvent) {
   if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
   if (pointers.size === 1 && pan.active) {
-    view.tx = pan.tx + (e.clientX - pan.x)
-    view.ty = pan.ty + (e.clientY - pan.y)
+    pendingView = { tx: pan.tx + (e.clientX - pan.x), ty: pan.ty + (e.clientY - pan.y), s: view.s }
+    scheduleViewApply()
   } else if (pointers.size === 2 && pinchStart) {
     const [a, b] = [...pointers.values()]
     const d = Math.hypot(a.x - b.x, a.y - b.y)
-    view.s = clamp(pinchStart.s * (d / Math.max(1, pinchStart.d)), 0.2, 4)
+    pendingView = { tx: view.tx, ty: view.ty, s: clamp(pinchStart.s * (d / Math.max(1, pinchStart.d)), 0.2, 4) }
+    scheduleViewApply()
   }
 }
 function onPointerUp(e: PointerEvent) {
@@ -260,9 +303,12 @@ function onWheel(e: WheelEvent) {
   const factor = Math.exp(-e.deltaY * 0.0016)
   const s = clamp(view.s * factor, 0.2, 4)
   const k = s / view.s
-  view.tx = mx - (mx - view.tx) * k
-  view.ty = my - (my - view.ty) * k
-  view.s = s
+  pendingView = {
+    tx: mx - (mx - view.tx) * k,
+    ty: my - (my - view.ty) * k,
+    s,
+  }
+  scheduleViewApply()
   userMoved = true
 }
 function onBlankClick() {
@@ -311,9 +357,11 @@ function startRelDragT(e: TouchEvent) {
 const selected = computed(() => (selectedId.value !== null ? nodeMap[selectedId.value] : null))
 
 let ro: ResizeObserver | null = null
+let resizeDebounce: number | null = null
 onMounted(() => {
   buildNodes()
   computeRelated()
+  buildCaches()
   if (rootRef.value) {
     const upd = () => {
       const r = rootRef.value?.getBoundingClientRect()
@@ -324,11 +372,22 @@ onMounted(() => {
       }
     }
     upd()
-    ro = new ResizeObserver(upd)
+    // ResizeObserver 高频触发（拖动/伸缩窗口）→ debounce 归并到一次
+    const debouncedUpd = () => {
+      if (resizeDebounce !== null) window.clearTimeout(resizeDebounce)
+      resizeDebounce = window.setTimeout(() => {
+        resizeDebounce = null
+        upd()
+      }, 100)
+    }
+    ro = new ResizeObserver(debouncedUpd)
     ro.observe(rootRef.value)
   }
 })
-onBeforeUnmount(() => ro?.disconnect())
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  if (resizeDebounce !== null) window.clearTimeout(resizeDebounce)
+})
 </script>
 
 <style scoped>

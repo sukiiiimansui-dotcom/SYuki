@@ -3,7 +3,7 @@
     <!-- 底层图片（当前显示的图片） -->
     <slot></slot>
     <div
-      class="absolute inset-0 w-full h-full bg-no-repeat z-10 backface-hidden will-change-[opacity,background-image]"
+      class="absolute inset-0 w-full h-full bg-no-repeat z-10 backface-hidden"
       :style="{
         backgroundImage: `url(${currentImageUrl})`,
         backgroundSize: objectFit,
@@ -15,7 +15,7 @@
     <!-- 新增 ref="topDivRef" 用于强制重排 -->
     <div
       ref="topDivRef"
-      class="absolute inset-0 w-full h-full bg-no-repeat z-20 backface-hidden will-change-[opacity,background-image] transition-opacity ease-in-out"
+      class="absolute inset-0 w-full h-full bg-no-repeat z-20 backface-hidden transition-opacity ease-in-out"
       :class="isFadingIn ? 'opacity-100' : 'opacity-0'"
       :style="{
         backgroundImage: `url(${nextImageUrl})`,

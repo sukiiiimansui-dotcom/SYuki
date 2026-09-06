@@ -79,6 +79,8 @@ const MAX_RECORD_SAMPLES = 60 * 16000;
  *  0 = 无缓冲）。voicePlaying 门控已保证 TTS 播放期间完全不监听，
  *  此缓冲期只兜底播放结束瞬间的残响尾巴。 */
 const ENERGY_WARMUP_MS = 100;
+/** 能量监测采样间隔（毫秒）：把每帧(60fps)的 analyser 读取降到 ~15Hz，显著减少无效 RMS 计算 */
+const ENERGY_TICK_MS = 66;
 /** 角色语音（TTS）播放中（GameRolesStage 桌面/桌宠通过 setVoicePlaying 同步）：
  *  外放 TTS 会被麦克风捕获 → RMS 触发 → VAD 判定为人声 → 误识别 AI 自己的话。
  *  播放期间 ASR 整体禁用（canStartAsr 门控 + handle drop），播完才恢复。
@@ -372,6 +374,7 @@ function startEnergyMonitor() {
       // 启动缓冲期：从 analyser 建立起算，头 N 毫秒不触发录音
       // （N = 设置页 energy_warmup_ms，兜底 TTS 播完瞬间的残响尾巴，0=无缓冲）
       const warmupUntil = Date.now() + (asrStore?.settings.energy_warmup_ms ?? ENERGY_WARMUP_MS);
+      let lastTick = 0;
       const tick = () => {
         if (!asrStore?.settings.auto_listen || !chatActive.value) {
           stopEnergyMonitor();
@@ -382,6 +385,13 @@ function startEnergyMonitor() {
           energyMon.raf = requestAnimationFrame(tick);
           return;
         }
+        // 节流到 ~15Hz：每帧都读 analyser 的 1024 个频点做 RMS 开销大，且无需如此高的采样率
+        const now = Date.now();
+        if (now - lastTick < ENERGY_TICK_MS) {
+          energyMon.raf = requestAnimationFrame(tick);
+          return;
+        }
+        lastTick = now;
         analyser.getByteFrequencyData(buf);
         // RMS 归一化：byte 0-255 → 0-1，阈值 0.08 约等于明显人声能量
         let sum = 0;

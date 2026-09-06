@@ -161,7 +161,7 @@ onMounted(async () => {
   // 1. 初始化窗口为桌宠尺寸
   await applyWindowLayout()
 
-  // 2. 启动 100ms 一次的 solid bounds 测试
+  // 2. 启动 solid bounds 测试（从 100ms 降频到 400ms：getBoundingClientRect + IPC 不再每 100ms 一次）
   hitTestInterval = window.setInterval(() => {
     const rects = []
 
@@ -196,7 +196,7 @@ onMounted(async () => {
     }
 
     invoke('update_solid_regions', { rects }).catch(console.error)
-  }, 100)
+  }, 400)
 })
 
 watch(

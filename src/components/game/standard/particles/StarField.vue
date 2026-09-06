@@ -59,8 +59,8 @@ class StarFieldRenderer {
     this.w = 0
     this.h = 0
 
-    // 低性能更省：限制帧率（手机端降档）
-    this.fpsLimit = window.innerWidth < 900 ? 24 : 30
+    // 低性能更省：限制帧率（手机端降档）——手机端 15fps / 桌面端 24fps
+    this.fpsLimit = window.innerWidth < 900 ? 15 : 24
     this.lastFrameTime = 0
     this.frameInterval = 1000 / this.fpsLimit
 
@@ -75,14 +75,23 @@ class StarFieldRenderer {
   }
 
   setupCanvas() {
-    this.w = this.canvas.width = window.innerWidth
-    this.h = this.canvas.height = window.innerHeight
+    this.w = window.innerWidth
+    this.h = window.innerHeight
+    // 用 devicePixelRatio 限制画布物理分辨率：上限 1.5，过高的 DPI 在背景星尘上
+    // 不产生可感知收益却显著增加每帧填充面积，是移动端 GPU 的主要负担。
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
+    this.canvas.width = Math.round(this.w * dpr)
+    this.canvas.height = Math.round(this.h * dpr)
+    // 坐标系统一回到 CSS 像素，绘制/取模仍用 this.w/this.h
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     this.pointer.x = this.w / 2
     this.pointer.y = this.h / 2
   }
 
   createStars() {
-    for (let i = 0; i < this.config.starCount; i++) {
+    // 手机端减星数：背景星尘需求低，减 40% 以减轻逐星 fillRect 的填充开销
+    const count = window.innerWidth < 900 ? Math.floor(this.config.starCount * 0.6) : this.config.starCount
+    for (let i = 0; i < count; i++) {
       const z = this.randomG()
       const color = this.config.colors[Math.floor(Math.random() * this.config.colors.length)]
 
@@ -98,6 +107,12 @@ class StarFieldRenderer {
   }
 
   update = (timestamp) => {
+    // 页面切到后台 / 标签被隐藏时彻底暂停，省下整块 GPU 与 CPU
+    if (document.hidden) {
+      this.stopAnimation()
+      return
+    }
+
     // 帧率控制：如果距离上一帧时间太短，跳过此帧
     if (timestamp - this.lastFrameTime < this.frameInterval) {
       this.animationId = requestAnimationFrame(this.update)
@@ -138,6 +153,7 @@ class StarFieldRenderer {
   addEventListeners() {
     window.addEventListener('resize', this.handleResize)
     this.canvas.addEventListener('mousemove', this.handleMouseMove)
+    document.addEventListener('visibilitychange', this.handleVisibility)
   }
 
   handleResize = () => {
@@ -151,6 +167,13 @@ class StarFieldRenderer {
   handleMouseMove = (e) => {
     this.pointer.x = e.clientX
     this.pointer.y = e.clientY
+  }
+
+  handleVisibility = () => {
+    // 回到前台时恢复动画（仅当仍被启用且确实已停）
+    if (!document.hidden && !this.animationId) {
+      this.startAnimation()
+    }
   }
 
   startAnimation() {
@@ -168,6 +191,7 @@ class StarFieldRenderer {
     this.stopAnimation()
     window.removeEventListener('resize', this.handleResize)
     this.canvas.removeEventListener('mousemove', this.handleMouseMove)
+    document.removeEventListener('visibilitychange', this.handleVisibility)
   }
 
   // Helper methods

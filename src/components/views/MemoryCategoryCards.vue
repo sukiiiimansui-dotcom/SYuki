@@ -11,13 +11,13 @@
       <div class="mcc-head">
         <span class="box" :style="{ background: cat.color }"></span>
         <span class="name">{{ cat.label }}</span>
-        <span class="count">{{ items(cat.key).length }} 条</span>
+        <span class="count">{{ catItems[cat.key].length }} 条</span>
         <span class="chev">{{ expanded === cat.key ? '▾' : '▸' }}</span>
       </div>
       <div v-if="expanded === cat.key" class="mcc-body">
-        <div v-if="!items(cat.key).length" class="mcc-empty">该类别暂无记忆。</div>
+        <div v-if="!catItems[cat.key].length" class="mcc-empty">该类别暂无记忆。</div>
         <div v-else class="mcc-list">
-          <div v-for="(it, i) in items(cat.key)" :key="i" class="mcc-item">
+          <div v-for="(it, i) in catItems[cat.key]" :key="i" class="mcc-item">
             <sup>{{ i + 1 }}</sup>{{ it }}
           </div>
         </div>
@@ -27,7 +27,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps<{
   sections: { short_term: string; long_term: string; user_info: string; promises: string }
@@ -52,6 +52,12 @@ function items(key: string): string[] {
     .map((t) => t.trim())
     .filter((t) => t.length >= 2)
 }
+// 依赖 props.sections 的缓存：每渲染调用多次 items() 改为一次性 computed
+const catItems = computed<Record<string, string[]>>(() => {
+  const result: Record<string, string[]> = {}
+  for (const cat of cats) result[cat.key] = items(cat.key)
+  return result
+})
 function toggle(key: string) {
   expanded.value = expanded.value === key ? null : key
 }

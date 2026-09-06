@@ -8,7 +8,7 @@
       [scrollbar-color:var(--accent-color)_transparent]
       justify-center
       p-3.75
-      transition-all
+      transition-[opacity]
       duration-200
       ease-[cubic-bezier(0.25,0.46,0.45,0.94)]
       before:pointer-events-none
@@ -325,7 +325,7 @@
             font-bold
             whitespace-pre-line
             text-white
-            transition-all
+            transition-colors
             duration-300
             outline-none"
         >
@@ -377,7 +377,7 @@
               font-[inherit]
               text-xl
               font-bold
-              transition-all
+              transition-colors
               duration-300
               outline-none
               text-shadow-[inherit]
@@ -408,7 +408,7 @@
           text-sm
           font-bold
           text-[#04bcff]
-          transition-all
+          transition-colors
           duration-300
           text-shadow-[inherit]
           hover:bg-transparent
@@ -468,7 +468,7 @@ const settingsStore = useSettingsStore()
 const llmStore = useLlmProvidersStore()
 
 // Dialog appearance managed by composable: useDialogAppearance
-const { isHidden, hide, dialogWrapperStyle, dialogTextColorValue, handleWheelHistory } =
+const { isHidden, hide, setTyping, dialogWrapperStyle, dialogTextColorValue, handleWheelHistory } =
   useDialogAppearance({
     openHistory: () => {
       uiStore.toggleSettings(true)
@@ -524,10 +524,8 @@ const onMobileMenuAction = (action: () => void) => {
   action()
   showMobileMenu.value = false
 }
-const currentDisplayedText = ref('')
 const dialogueLineRef = ref<HTMLDivElement | null>(null)
 const motionLineRef = ref<HTMLDivElement | null>(null)
-
 // 台词合并显示的分段模型（唯一事实来源）：台词/动作按序排列，颜色由容器 CSS 决定
 // （台词区白、动作区灰），普通台词自带换行不再干扰分色。
 type DisplaySegment = { kind: 'dialogue' | 'motion'; text: string }
@@ -611,7 +609,6 @@ function resetResponseDisplay() {
 
 // 立即把当前台词写入显示元素（不经过打字动画；供挂载恢复使用）
 function renderLineInstant(line: string) {
-  currentDisplayedText.value = line
   segments = buildSegments(line)
   if (settingsStore.text.inlineMotionText) {
     if (inlineDisplayRef.value) {
@@ -640,9 +637,7 @@ const {
   stopTyping: stopTextTyping,
   isTyping: isTextTyping,
   appendTyping: appendTextTyping,
-} = useTypeWriter(textareaRef, (text) => {
-  currentDisplayedText.value = text
-})
+} = useTypeWriter(textareaRef)
 
 // 内联模式 TypeWriter（div + charReveal 逐字符路由渲染；逐字符渲染由 charReveal 负责，
 // appendTyping 用于台词合并续打）
@@ -652,13 +647,7 @@ const {
   isTyping: isInlineTyping,
   finishTyping: finishInlineTyping,
   appendTyping: appendInlineTyping,
-} = useTypeWriter(
-  inlineDisplayRef,
-  (text) => {
-    currentDisplayedText.value = text
-  },
-  charReveal.writeFn,
-)
+} = useTypeWriter(inlineDisplayRef, undefined, charReveal.writeFn)
 
 // 统一 isTyping（父组件通过 defineExpose 使用）
 const isTyping = computed(() =>
@@ -824,7 +813,6 @@ watch([() => uiStore.showCharacterLine, () => gameStore.currentStatus], ([newLin
     } else {
       // 全新台词：重置显示区 + 从 0 打字（内联模式台词与动作区井行逐字打字）
       inputMessage.value = ''
-      currentDisplayedText.value = ''
       isShowingMotionText.value = false
 
       if (settingsStore.text.inlineMotionText) {
@@ -846,7 +834,6 @@ watch([() => uiStore.showCharacterLine, () => gameStore.currentStatus], ([newLin
     stopMotionTyping()
     isShowingMotionText.value = false
     inputMessage.value = ''
-    currentDisplayedText.value = ''
     dialogueMerge.mergedLength = 0
     segments = []
   }
@@ -855,6 +842,8 @@ watch([() => uiStore.showCharacterLine, () => gameStore.currentStatus], ([newLin
 // 同步打字状态给合并判定（event-queue.addEvent 在 i+1 到达时读取）
 watch(isTyping, (t) => {
   dialogueMerge.isTyping = t
+  // 打字期间禁用 backdrop-filter（逐字重绘避免每帧重采样模糊）
+  setTyping(t)
 })
 
 // 内联模式 div 可见时自动聚焦，确保 Enter 键能推进对话
@@ -1131,7 +1120,11 @@ defineExpose({
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
-  transition: all 0.25s ease;
+  transition:
+    background 0.25s ease,
+    color 0.25s ease,
+    border-color 0.25s ease,
+    transform 0.25s ease;
   margin: 0 4px;
   display: flex;
   align-items: center;

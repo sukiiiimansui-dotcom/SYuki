@@ -37,7 +37,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { netmusicRecommend, netmusicSearch } from '@/api/services/netmusic'
 import type { NetMusicSong } from '@/api/services/netmusic'
@@ -56,6 +56,10 @@ const loading = ref(false)
 const error = ref('')
 const moods = ['happy', 'sad', 'relax', 'calm', 'study', 'music']
 
+// 前端结果缓存：keyed by keyword / mood，避免反复 invoke 后端
+const searchCache = new Map<string, NetMusicSong[]>()
+const recommendCache = new Map<string, NetMusicSong[]>()
+
 function goBack() {
   router.push('/')
 }
@@ -67,10 +71,17 @@ function fmt(sec: number): string {
 }
 async function doSearch() {
   if (!keyword.value.trim()) return
+  const key = keyword.value.trim().toLowerCase()
+  const cached = searchCache.get(key)
+  if (cached) {
+    songs.value = cached
+    return
+  }
   loading.value = true
   error.value = ''
   try {
     songs.value = await netmusicSearch(keyword.value.trim(), 8)
+    searchCache.set(key, songs.value)
   } catch (e: any) {
     error.value = typeof e === 'string' ? e : e?.message || '搜索失败'
   } finally {
@@ -78,19 +89,24 @@ async function doSearch() {
   }
 }
 async function recommend(m: string) {
+  const cached = recommendCache.get(m)
+  if (cached) {
+    songs.value = cached
+    return
+  }
   loading.value = true
   error.value = ''
   try {
     songs.value = await netmusicRecommend(m, 10)
+    recommendCache.set(m, songs.value)
   } catch (e: any) {
     error.value = typeof e === 'string' ? e : e?.message || '推荐失败'
   } finally {
     loading.value = false
   }
 }
-onMounted(() => {
-  recommend('calm')
-})
+// 去掉自动推荐请求：进入页面不再静默打后端，改为用户主动触发
+
 </script>
 
 <style scoped>

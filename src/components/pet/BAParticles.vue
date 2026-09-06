@@ -103,34 +103,64 @@ const resizeCanvas = () => {
   }
 };
 
+// 帧率上限 + 页面隐藏暂停：背景装饰气泡 30fps 足够，避免 60fps 常驻空转
+const TARGET_FPS = 30;
+const FRAME_INTERVAL = 1000 / TARGET_FPS;
+let lastTime = 0;
+let running = false;
+
 const loop = () => {
-  if (!canvasRef.value) return;
-  const ctx = canvasRef.value.getContext("2d");
-  if (!ctx) return;
+  if (!running || !canvasRef.value) return;
 
-  ctx.clearRect(0, 0, width, height);
+  const now = performance.now();
+  if (now - lastTime >= FRAME_INTERVAL) {
+    lastTime = now;
+    const ctx = canvasRef.value.getContext("2d");
+    if (!ctx) return;
 
-  particles.forEach((p) => {
-    p.update();
-    p.draw(ctx);
-  });
+    ctx.clearRect(0, 0, width, height);
+
+    particles.forEach((p) => {
+      p.update();
+      p.draw(ctx);
+    });
+  }
 
   animationFrameId = requestAnimationFrame(loop);
+};
+
+const startLoop = () => {
+  if (running) return;
+  running = true;
+  lastTime = 0;
+  loop();
+};
+
+const stopLoop = () => {
+  running = false;
+  cancelAnimationFrame(animationFrameId);
+};
+
+const handleVisibility = () => {
+  if (document.hidden) stopLoop();
+  else if (!running) startLoop();
 };
 
 onMounted(() => {
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
+  document.addEventListener("visibilitychange", handleVisibility);
 
   for (let i = 0; i < props.particleCount; i++) {
     particles.push(new Particle());
   }
 
-  loop();
+  startLoop();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", resizeCanvas);
-  cancelAnimationFrame(animationFrameId);
+  document.removeEventListener("visibilitychange", handleVisibility);
+  stopLoop();
 });
 </script>

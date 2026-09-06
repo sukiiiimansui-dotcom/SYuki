@@ -14,6 +14,8 @@
  * 旧节点，之后所有字符都插进不可见处）。缺省清空整个 element（无子容器的单元素场景）。
  */
 
+import { escapeHtml } from '../escapeHtml';
+
 export interface CharRevealOptions {
   /**
    * 生成单个字符的 HTML。
@@ -52,6 +54,34 @@ export function createCharRevealWriter(options: CharRevealOptions): CharRevealWr
   // 上一次已渲染到元素里的原文
   let prev = '';
 
+  // 把 [start, end) 的字符拼成一段 HTML（\n→<br>，其余逐字符转义），
+  // 作为「一个块」整体插入，而非每字一个动画 span——避免逐字创建合成层。
+  const buildBlockHtml = (text: string, start: number, end: number): string => {
+    let html = '';
+    for (let i = start; i < end; i++) {
+      const ch = text.charAt(i);
+      if (ch === '\n') html += '<br>';
+      else if (ch === ' ') html += ' ';
+      else html += escapeHtml(ch);
+    }
+    return html;
+  };
+
+  // 按 route 的目标连续成组，每组作为单一块插入一次；单目标时退化为一次插入。
+  const insertBlock = (element: HTMLElement, text: string, start: number, end: number): void => {
+    if (start >= end) return;
+    let segStart = start;
+    let segTarget = targetFor(element, start, text);
+    for (let i = start + 1; i <= end; i++) {
+      const t = i < end ? targetFor(element, i, text) : null;
+      if (i === end || t !== segTarget) {
+        segTarget.insertAdjacentHTML('beforeend', buildBlockHtml(text, segStart, i));
+        segStart = i;
+        if (t) segTarget = t;
+      }
+    }
+  };
+
   // 清空显示：缺省清外层；有自定义 clear（如台词合并的两容器场景）则只清内容容器
   const clearDisplay = (element: HTMLElement): void => {
     if (options.clear) {
@@ -82,15 +112,16 @@ export function createCharRevealWriter(options: CharRevealOptions): CharRevealWr
 
     const addedLen = text.length - prev.length;
     if (addedLen > 0) {
-      // 只插入新增部分：不能用 innerHTML +=（会重建旧节点并重播动画）。
-      // 单字符 tick → 动画；批量（finish 补全剩余字符）→ 瞬时。
-      // 逐字符按 route 插入对应子容器。
-      for (let i = prev.length; i < text.length; i++) {
-        const target = targetFor(element, i, text);
+      if (addedLen === 1) {
+        // 单字符 tick：保留原逐字淡入+上浮动画 span
+        const target = targetFor(element, text.length - 1, text);
         target.insertAdjacentHTML(
           'beforeend',
-          options.charHtml(text.charAt(i), i, text, addedLen === 1),
+          options.charHtml(text.charAt(text.length - 1), text.length - 1, text, true),
         );
+      } else {
+        // 批量追加（fast typing 一帧多字 / finish 补全）：整块一次性插入，不再每字一个 span
+        insertBlock(element, text, prev.length, text.length);
       }
       prev = text;
     }
@@ -98,9 +129,8 @@ export function createCharRevealWriter(options: CharRevealOptions): CharRevealWr
 
   const renderInstant = (element: HTMLElement, text: string): void => {
     clearDisplay(element);
-    for (let i = 0; i < text.length; i++) {
-      const target = targetFor(element, i, text);
-      target.insertAdjacentHTML('beforeend', options.charHtml(text.charAt(i), i, text, false));
+    if (text.length > 0) {
+      insertBlock(element, text, 0, text.length);
     }
     prev = text;
   };

@@ -29,9 +29,9 @@
             <h2>{{ sec.label }}</h2>
             <span class="badge">{{ sec.key }}</span>
           </div>
-          <div v-if="!filtered(sec).length" class="empty">{{ sec.empty }}</div>
+          <div v-if="!sectionLines[sec.key].length" class="empty">{{ sec.empty }}</div>
           <ul v-else class="lines">
-            <li v-for="(line, i) in filtered(sec)" :key="i" class="line">{{ line }}</li>
+            <li v-for="(line, i) in sectionLines[sec.key]" :key="i" class="line">{{ line }}</li>
           </ul>
         </section>
       </template>
@@ -84,13 +84,17 @@ function roleId(): number {
   return gameStore.mainRoleId || gameStore.currentInteractRoleId || 1
 }
 
-function filtered(sec: { key: SectionKey }): string[] {
-  const raw = String(memory.value[sec.key] || '')
-  const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean)
+// 依赖 keyword / memory / sections 的缓存：每渲染 ~8 次调用 filtered() 改为一次性 computed
+const sectionLines = computed<Record<SectionKey, string[]>>(() => {
   const k = keyword.value.trim().toLowerCase()
-  if (!k) return lines
-  return lines.filter((l) => l.toLowerCase().includes(k))
-}
+  const result = {} as Record<SectionKey, string[]>
+  for (const sec of sections.value) {
+    const raw = String(memory.value[sec.key] || '')
+    const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean)
+    result[sec.key] = k ? lines.filter((l) => l.toLowerCase().includes(k)) : lines
+  }
+  return result
+})
 
 async function load() {
   const id = roleId()

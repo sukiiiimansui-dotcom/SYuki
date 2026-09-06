@@ -69,10 +69,15 @@ const AXES = [
 // 从对话历史取最近情绪
 const recentEmotions = computed(() => {
   const hs = gameStore.dialogHistory || []
-  const list = hs
-    .filter((m) => m.emotion && m.emotion !== '正常' && m.emotion !== '未知')
-    .map((m) => m.emotion as string)
-  return list.slice(-30)
+  // 从尾部逆序收集最近的 30 条含情绪记录，避免全量 filter 扫描整段历史
+  const out: string[] = []
+  for (let i = hs.length - 1; i >= 0 && out.length < 30; i--) {
+    const m = hs[i]
+    if (m.emotion && m.emotion !== '正常' && m.emotion !== '未知') {
+      out.push(m.emotion as string)
+    }
+  }
+  return out.reverse()
 })
 const rawCount = computed(() => recentEmotions.value.length)
 

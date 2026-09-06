@@ -191,7 +191,8 @@ function installObserver() {
       }
     }
   })
-  observer.observe(document.documentElement, { childList: true, subtree: true })
+  // 收敛观察范围到 body（不含 head 里的样式/元数据等），减少 DOM 子树变更触发次数
+  observer.observe(document.body, { childList: true, subtree: true })
 }
 
 function installAudioWrapper() {

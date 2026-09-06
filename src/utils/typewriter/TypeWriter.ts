@@ -24,6 +24,14 @@ export class TypeWriter {
   private soundBuffers: AudioBuffer[]
   private readonly soundUrls: string[]
 
+  // 性能优化：把「写内容 + 滚到底」攒到 rAF 一帧一次，避免逐字符强回流
+  private rafId: number | null = null
+  private pendingWrite: string | null = null
+  // 音频：每 N 个字符才播一次，且复用同一个直达 destination 的 gain 节点
+  private soundCounter = 0
+  private readonly soundEvery = 2
+  private soundGain: GainNode | null = null
+
   // State
   private _status: TypeWriterStatus = 'idle'
 
@@ -101,14 +109,17 @@ export class TypeWriter {
       const buffer = this.soundBuffers[Math.floor(Math.random() * this.soundBuffers.length)]
       if (!buffer) return
 
+      // 池化：复用同一个直达 destination 的 gain 节点，只为每次发声新建一次性的 source
+      if (!this.soundGain) {
+        this.soundGain = this.audioContext.createGain()
+        this.soundGain.gain.value = 0.8
+        this.soundGain.connect(this.audioContext.destination)
+      }
+
       const source = this.audioContext.createBufferSource()
       source.buffer = buffer
       source.playbackRate.value = 1.0 + (Math.random() - 0.5) * 0.01 // slight variation
-
-      const gainNode = this.audioContext.createGain()
-      gainNode.gain.value = 0.8
-      source.connect(gainNode)
-      gainNode.connect(this.audioContext.destination)
+      source.connect(this.soundGain)
       source.start()
     } catch {
       // Silently ignore audio playback failures — never break the typing animation
@@ -169,21 +180,15 @@ export class TypeWriter {
         // 循环自然从上次位置继续，把新增字符也打出来。
         if (this.i < this.targetText.length) {
           this.textBuffer += this.targetText.charAt(this.i)
-          if (this.writeFn) {
-            this.writeFn(this.element, this.textBuffer)
-          } else if (
-            this.element instanceof HTMLInputElement ||
-            this.element instanceof HTMLTextAreaElement
-          ) {
-            this.element.value = this.textBuffer
-          }
-          if (this.onTextUpdateCallback) {
-            this.onTextUpdateCallback(this.textBuffer)
-          }
           this.i++
-          this.element.scrollTop = this.element.scrollHeight
-
-          this.playRandomSound()
+          // 攒到一帧：真实 DOM 写入 + 滚动在 rAF 中一次性完成，避免逐字符强回流
+          this.pendingWrite = this.textBuffer
+          this.scheduleFlush()
+          // 每 N 个字符播一次音效（source 一次性，gain 池化复用）
+          this.soundCounter++
+          if (this.soundCounter % this.soundEvery === 0) {
+            this.playRandomSound()
+          }
 
           //timer接收delay的是延迟（越大越慢），而传入的speed是速度（越大越快）
           //此处按照Text.vue（速度演示文本）中的方式重新计算延迟值
@@ -233,6 +238,7 @@ export class TypeWriter {
 
   /** Immediately complete the current typing animation (show all text). */
   public finish(): void {
+    this.cancelFlush()
     this.stopTimer()
     this._status = 'completed'
     this.element.style.setProperty('border-right', 'none')
@@ -265,6 +271,7 @@ export class TypeWriter {
    */
   public stop(): void {
     this.stopTimer()
+    this.cancelFlush()
     this.generation++ // invalidate any lingering typing closures
     this.typingLoop = null
     this._status = 'idle'
@@ -272,6 +279,7 @@ export class TypeWriter {
 
   /** Clear the DOM element and internal text buffer. */
   public clear(): void {
+    this.cancelFlush()
     if (this.writeFn) {
       this.writeFn(this.element, '')
     } else if (
@@ -309,5 +317,46 @@ export class TypeWriter {
       clearTimeout(this.timer)
       this.timer = null
     }
+  }
+
+  /**
+   * 把积攒的文本写进 DOM + 滚到底，攒到一帧一次：逐字符强制回流/滚动的成本
+   * 被一次 requestAnimationFrame 摊销，且只在内容真正溢出时才写 scrollTop。
+   */
+  private scheduleFlush(): void {
+    if (this.rafId !== null) return
+    this.rafId = requestAnimationFrame(() => {
+      this.rafId = null
+      this.flushDom()
+    })
+  }
+
+  private flushDom(): void {
+    const text = this.pendingWrite
+    if (text === null) return
+    this.pendingWrite = null
+    if (this.writeFn) {
+      this.writeFn(this.element, text)
+    } else if (
+      this.element instanceof HTMLInputElement ||
+      this.element instanceof HTMLTextAreaElement
+    ) {
+      this.element.value = text
+    }
+    if (this.onTextUpdateCallback) {
+      this.onTextUpdateCallback(text)
+    }
+    // 只有内容超过可视区（真正溢出）才滚动到底；一次/帧，避免逐字符强回流
+    if (this.element.scrollHeight > this.element.clientHeight) {
+      this.element.scrollTop = this.element.scrollHeight
+    }
+  }
+
+  private cancelFlush(): void {
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId)
+      this.rafId = null
+    }
+    this.pendingWrite = null
   }
 }

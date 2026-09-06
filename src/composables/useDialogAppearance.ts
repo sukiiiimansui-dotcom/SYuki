@@ -32,9 +32,17 @@ export function useDialogAppearance(options: UseDialogAppearanceOptions) {
   // ── 对话框隐藏状态 ──
   const isHidden = ref(false)
 
+  // ── 打字中标记：逐字重绘期间禁用 backdrop-filter，避免每帧重采样模糊 ──
+  const isTyping = ref(false)
+
   /** 隐藏对话框 */
   function hide() {
     isHidden.value = true
+  }
+
+  /** 由组件同步打字状态：打字期间下采样 backdrop-filter */
+  function setTyping(value: boolean) {
+    isTyping.value = value
   }
 
   // ── 样式计算 ──
@@ -49,7 +57,9 @@ export function useDialogAppearance(options: UseDialogAppearanceOptions) {
       style.backgroundImage = `url(${dialogBgImage.value})`
       style.backgroundSize = 'cover'
       style.backgroundPosition = 'center'
-      style.backdropFilter = `blur(${dialogBlur.value}px)`
+      // 逐字重绘期间 backdrop-filter 会每帧重采样被模糊区域（与打字机抢 GPU），
+      // 打字时改为半透明纯色兜底，待打字结束再恢复模糊。
+      style.backdropFilter = isTyping.value ? 'none' : `blur(${dialogBlur.value}px)`
       style.backgroundColor = 'rgba(0,0,0,0.2)'
     } else {
       // 使用纯渐变色
@@ -98,6 +108,7 @@ export function useDialogAppearance(options: UseDialogAppearanceOptions) {
   return {
     isHidden,
     hide,
+    setTyping,
     dialogWrapperStyle,
     dialogTextColorValue,
     handleWheelHistory,

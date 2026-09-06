@@ -22,6 +22,8 @@ export interface FallingParticle {
   horizontalMovement: number
   /** Dynamically created stylesheet element (managed by hook) */
   styleSheet?: HTMLStyleElement
+  /** Per-particle CSS variables for the shared `fall-shared` keyframes (managed by hook) */
+  cssVars?: Record<string, string>
   /** Content character (like snowflake) */
   content?: string
   /** Hue value for color */
@@ -64,8 +66,8 @@ export interface UseFallingParticleOptions<T extends FallingParticle> {
   baseCount: number
   /** Factory function to create a custom particle */
   createParticle: (id: string, config: FallingParticleConfig) => T
-  /** Factory function to generate keyframe animation CSS */
-  generateKeyframes: (particle: T, maxHeight: number) => string
+  /** Factory function to compute per-particle CSS variables (one shared keyframes reused by all) */
+  computeVars: (particle: T, maxHeight: number) => Record<string, string>
 }
 
 /**

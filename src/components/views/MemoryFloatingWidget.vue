@@ -2,6 +2,7 @@
   <Teleport to="body">
     <div
       v-if="open"
+      ref="mfwRef"
       class="mfw"
       :class="{ fullscreen }"
       :style="{
@@ -9,6 +10,7 @@
         top: pos.y + 'px',
         width: pos.w + 'px',
         height: minimized ? '40px' : pos.h + 'px',
+        transform: dragTransform,
       }"
     >
       <!-- 标题栏（拖动区） -->
@@ -36,19 +38,19 @@
 
         <template v-else>
           <!-- 图谱 -->
-          <div v-show="tab === 'graph'" class="mfw-body">
+          <div v-if="tab === 'graph'" class="mfw-body">
             <MemoryGraph v-if="graphReady" :sections="memory" />
           </div>
           <!-- 情绪 -->
-          <div v-show="tab === 'emotion'" class="mfw-body scroll">
+          <div v-if="tab === 'emotion'" class="mfw-body scroll">
             <EmotionRadar />
           </div>
           <!-- 类别（长条卡片，点击展开看记忆）-->
-          <div v-show="tab === 'category'" class="mfw-body scroll">
+          <div v-if="tab === 'category'" class="mfw-body scroll">
             <MemoryCategoryCards :sections="memory" />
           </div>
           <!-- 文本 -->
-          <div v-show="tab === 'text'" class="mfw-body scroll">
+          <div v-if="tab === 'text'" class="mfw-body scroll">
             <div class="mfg-text">
               <section v-for="sec in textSections" :key="sec.key" class="mfg-sec">
                 <div class="mfg-sec-title" :style="{ color: sec.color }">{{ sec.label }}</div>
@@ -133,39 +135,64 @@ async function load() {
 }
 
 // ── 拖动 ──
-let drag = { on: false, ox: 0, oy: 0 }
+const mfwRef = ref<HTMLElement | null>(null)
+let drag = { on: false, ox: 0, oy: 0, startX: 0, startY: 0 }
+// 拖动中用 CSS transform 移动（只触发合成层，不触发重排/重渲染整窗树），松手才落 pos
+const dragDx = ref(0)
+const dragDy = ref(0)
+const dragTransform = computed(() =>
+  (dragDx.value || dragDy.value)
+    ? `translate(${dragDx.value}px, ${dragDy.value}px)`
+    : 'none',
+)
 function initPos() {
   pos.x = Math.max(0, window.innerWidth - pos.w - 16)
   pos.y = 72
 }
 function startDrag(e: MouseEvent) {
+  if (fullscreen.value) return
   drag.on = true
   drag.ox = e.clientX - pos.x
   drag.oy = e.clientY - pos.y
+  drag.startX = pos.x
+  drag.startY = pos.y
+  dragDx.value = 0
+  dragDy.value = 0
   window.addEventListener('mousemove', onMove)
   window.addEventListener('mouseup', onUp)
 }
 function startDragT(e: TouchEvent) {
+  if (fullscreen.value) return
   const t = e.touches[0]
   drag.ox = t.clientX - pos.x
   drag.oy = t.clientY - pos.y
+  drag.startX = pos.x
+  drag.startY = pos.y
+  dragDx.value = 0
+  dragDy.value = 0
   drag.on = true
   window.addEventListener('touchmove', onMoveT, { passive: true })
   window.addEventListener('touchend', onUp)
 }
 function onMove(e: MouseEvent) {
   if (!drag.on) return
-  pos.x = e.clientX - drag.ox
-  pos.y = e.clientY - drag.oy
+  dragDx.value = e.clientX - (drag.ox + drag.startX)
+  dragDy.value = e.clientY - (drag.oy + drag.startY)
 }
 function onMoveT(e: TouchEvent) {
   if (!drag.on) return
   const t = e.touches[0]
-  pos.x = t.clientX - drag.ox
-  pos.y = t.clientY - drag.oy
+  dragDx.value = t.clientX - (drag.ox + drag.startX)
+  dragDy.value = t.clientY - (drag.oy + drag.startY)
 }
 function onUp() {
+  if (drag.on) {
+    pos.x = drag.startX + dragDx.value
+    pos.y = drag.startY + dragDy.value
+  }
   drag.on = false
+  dragDx.value = 0
+  dragDy.value = 0
   window.removeEventListener('mousemove', onMove)
   window.removeEventListener('touchmove', onMoveT)
   window.removeEventListener('touchend', onUp)

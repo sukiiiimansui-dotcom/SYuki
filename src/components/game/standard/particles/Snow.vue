@@ -1,5 +1,5 @@
 <template>
-  <div class="snow-container" ref="containerRef">
+  <div class="snow-container" ref="containerRef" :style="{ '--fh': maxHeight + 'px' }">
     <div
       class="snowflake"
       v-for="(snowflake, index) in snowflakes"
@@ -9,7 +9,8 @@
         left: `${snowflake.left}px`,
         top: `${snowflake.top}px`,
         opacity: snowflake.opacity,
-        animation: `fall-${snowflake.id} ${snowflake.duration}s linear ${snowflake.delay}s infinite`,
+        ...(snowflake.cssVars as Record<string, string>),
+        animation: `fall-shared ${snowflake.duration}s linear ${snowflake.delay}s infinite`,
       }"
     >
       {{ snowflake.content }}
@@ -21,7 +22,7 @@
 import {
   useFallingParticle,
   createDefaultParticle,
-  createDefaultKeyframes,
+  createDefaultParticleVars,
 } from './hooks/useFallingParticle'
 import type { FallingParticle } from './types/falling'
 import { snow } from './config/snow'
@@ -48,17 +49,17 @@ const createSnowflake = (id: string): FallingParticle => {
   return createDefaultParticle(id, config, { content })
 }
 
-const generateSnowflakeKeyframes = (snowflake: FallingParticle, maxHeight: number): string => {
-  return createDefaultKeyframes(snowflake, maxHeight, keyframes)
+const generateSnowflakeVars = (snowflake: FallingParticle, maxHeight: number): Record<string, string> => {
+  return createDefaultParticleVars(snowflake, maxHeight, keyframes)
 }
 
-const { particles: snowflakes } = useFallingParticle<FallingParticle>(
+const { particles: snowflakes, maxHeight } = useFallingParticle<FallingParticle>(
   props,
   {
     config,
     baseCount: settings.baseCount,
     createParticle: createSnowflake,
-    generateKeyframes: generateSnowflakeKeyframes,
+    computeVars: generateSnowflakeVars,
   },
   containerRef,
 )

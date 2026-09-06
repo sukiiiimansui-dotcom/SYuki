@@ -1,5 +1,5 @@
 <template>
-  <div class="petal-container" ref="containerRef">
+  <div class="petal-container" ref="containerRef" :style="{ '--fh': maxHeight + 'px' }">
     <div
       class="petal"
       v-for="(petal, index) in petals"
@@ -11,7 +11,8 @@
         top: `${petal.top}px`,
         opacity: petal.opacity,
         background: `linear-gradient(135deg, hsl(${petal.hue}, 100%, 85%), hsl(${petal.hue}, 100%, 75%))`,
-        animation: `fall-${petal.id} ${petal.duration}s linear ${petal.delay}s infinite`,
+        ...(petal.cssVars as Record<string, string>),
+        animation: `fall-shared ${petal.duration}s linear ${petal.delay}s infinite`,
       }"
     ></div>
   </div>
@@ -21,7 +22,7 @@
 import {
   useFallingParticle,
   createDefaultParticle,
-  createDefaultKeyframes,
+  createDefaultParticleVars,
   randomInRange,
 } from './hooks/useFallingParticle'
 import type { FallingParticle } from './types/falling'
@@ -47,17 +48,17 @@ const createPetal = (id: string): FallingParticle => {
   return createDefaultParticle(id, config, { hue })
 }
 
-const generatePetalKeyframes = (petal: FallingParticle, maxHeight: number): string => {
-  return createDefaultKeyframes(petal, maxHeight, keyframes)
+const generatePetalVars = (petal: FallingParticle, maxHeight: number): Record<string, string> => {
+  return createDefaultParticleVars(petal, maxHeight, keyframes)
 }
 
-const { particles: petals } = useFallingParticle<FallingParticle>(
+const { particles: petals, maxHeight } = useFallingParticle<FallingParticle>(
   props,
   {
     config,
     baseCount: settings.baseCount,
     createParticle: createPetal,
-    generateKeyframes: generatePetalKeyframes,
+    computeVars: generatePetalVars,
   },
   containerRef,
 )
