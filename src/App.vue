@@ -17,6 +17,9 @@
   <AdventureUnlockNotify v-if="isMainWindow" />
   <AppDialog v-if="isMainWindow" />
 
+  <!-- 世界地图叠加层（背景层/角落小窗，T6-2） -->
+  <WorldMapLayer v-if="isMainWindow" />
+
   <!-- 记忆增强：悬浮小窗 + 全局触发按钮 -->
   <MemoryFloatingWidget />
   <button v-if="memBtnVisible" class="mem-fab" @click="toggleMemWidget">
@@ -38,6 +41,7 @@ import AchievementToast from './components/ui/AchievementToast.vue'
 import AdventureUnlockNotify from './components/ui/AdventureUnlockNotify.vue'
 import AppDialog from './components/ui/AppDialog.vue'
 import MemoryFloatingWidget from './components/views/MemoryFloatingWidget.vue'
+import WorldMapLayer from './components/views/WorldMapLayer.vue'
 import { useMemoryWidget } from './composables/useMemoryWidget'
 import { initUIStore } from './stores/modules/ui/ui'
 import { i18n } from './locales'

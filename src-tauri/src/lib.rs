@@ -13,6 +13,7 @@ mod migration;
 mod plugins;
 mod resource_sync;
 pub mod utils;
+mod world_map;
 
 use std::sync::Arc;
 
@@ -551,6 +552,13 @@ pub fn run() {
         })
         // 注册所有 API 命令
         .invoke_handler(tauri::generate_handler![
+            world_map::world_map_blocks,
+            world_map::world_map_blocks_at,
+            world_map::world_map_geo_status,
+            world_map::world_map_coord_selftest,
+            world_map::world_map_render_svg,
+            world_map::world_map_push_events,
+            world_map::world_map_recent_events,
             utils::log_bridge::get_log_history,
             utils::log_bridge::open_log_window,
             utils::log_bridge::is_log_window_open,

@@ -15,6 +15,7 @@ const ScriptEditor = () => import('../components/views/ScriptEditor.vue')
 const Bilibili = () => import('../components/views/Bilibili.vue')
 const NetMusic = () => import('../components/views/NetMusic.vue')
 const MemoryPanel = () => import('../components/views/MemoryPanel.vue')
+const WorldMap = () => import('../components/views/WorldMap.vue')
 
 // 1. 定义路由表
 const routes = [
@@ -22,6 +23,11 @@ const routes = [
     path: '/',
     name: 'MainMenu',
     component: MainMenu,
+  },
+  {
+    path: '/world',
+    name: 'WorldMap',
+    component: WorldMap,
   },
   {
     path: '/chat',

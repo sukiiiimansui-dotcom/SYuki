@@ -10,6 +10,9 @@
       <StartItem @click="() => emit('open-workshop')">{{ $t('views.menu.scriptEditor') }}</StartItem>
     </StartLine>
     <StartLine>
+      <StartItem @click="() => emit('open-world')">世界</StartItem>
+    </StartLine>
+    <StartLine>
       <StartItem @click="() => emit('open-memory')">记忆</StartItem>
     </StartLine>
     <StartLine>
@@ -40,6 +43,7 @@ const emit = defineEmits<{
   (e: 'open-settings', tab?: string): void
   (e: 'open-credits'): void
   (e: 'open-workshop'): void
+  (e: 'open-world'): void
   (e: 'open-memory'): void
   (e: 'open-bili'): void
   (e: 'open-netmusic'): void
