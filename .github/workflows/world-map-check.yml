@@ -2,6 +2,9 @@ name: 世界地图 · 编译检查
 
 # 只做「编译能不能过」这件轻活，几分钟出结果；
 # 完整的 Android APK 打包走 build-android.yml（手动触发）。
+#
+# 注意：不要给 checkout 加 `lfs: true` —— 本仓库 .gitattributes 没有 LFS 规则、
+# `git lfs ls-files` 为 0 个文件，而服务器上又缺 LFS 对象，加了会 404 直接挂。
 on:
   push:
     branches: ['feat/world-map', 'feat/**']
@@ -26,8 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - uses: pnpm/action-setup@v4
         with:
@@ -69,8 +70,6 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - name: 安装 Tauri 所需的 Linux 依赖
         run: |
