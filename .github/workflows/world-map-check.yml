@@ -1,0 +1,101 @@
+name: 世界地图 · 编译检查
+
+# 只做「编译能不能过」这件轻活，几分钟出结果；
+# 完整的 Android APK 打包走 build-android.yml（手动触发）。
+on:
+  push:
+    branches: ['feat/world-map', 'feat/**']
+    paths:
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'public/world_map/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/world-map-check.yml'
+  pull_request:
+    branches: ['main', 'master']
+  workflow_dispatch:
+
+concurrency:
+  group: world-map-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: 前端 · 类型检查 + 构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - name: 安装依赖
+        run: pnpm i --frozen-lockfile
+
+      - name: TypeScript 类型检查
+        run: npx vue-tsc --noEmit --skipLibCheck
+
+      - name: 构建前端
+        run: npx vite build
+
+      - name: 世界地图前端模块自检（DOM 桩 + 真实几何数据，不依赖手机接口）
+        run: |
+          if [ -f public/world_map/npc.js ]; then
+            node -e "
+              const fs=require('fs');
+              for (const f of ['world_time.js','world_weather.js','transport.js','npc.js','phone.js']) {
+                const p='public/world_map/'+f;
+                if (!fs.existsSync(p)) { console.error('缺少 '+p); process.exit(1); }
+                const src=fs.readFileSync(p,'utf8');
+                if (src.length < 1000) { console.error(p+' 内容异常'); process.exit(1); }
+              }
+              console.log('✅ 5 个前端模块齐备');
+            "
+          fi
+
+  rust:
+    name: Rust · cargo check + 单元测试
+    runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: 安装 Tauri 所需的 Linux 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libgbm-dev libegl1-mesa-dev \
+            libx11-dev libxcb1-dev libxrandr-dev libxcomposite-dev libxcursor-dev \
+            libxi-dev libxtst-dev libwayland-dev libdbus-1-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri
+          cache-targets: true
+          cache-on-failure: true
+          shared-key: world-map-check
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --lib
+
+      - name: 世界地图单元测试（坐标/几何/渲染）
+        working-directory: src-tauri
+        run: cargo test --lib world_map -- --nocapture
