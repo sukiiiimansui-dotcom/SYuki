@@ -91,6 +91,13 @@ jobs:
           cache-on-failure: true
           shared-key: world-map-check
 
+      # cargo 不会执行 tauri.conf.json 的 beforeBuildCommand，
+      # 而 build.rs 会校验 .bundled_resources/ 下的资源（缺了直接报
+      # "resource path .bundled_resources/data_manifest.json doesn't exist"）。
+      # 该脚本零第三方依赖，直接 node 跑即可。
+      - name: 准备 Tauri 打包资源（cargo 不跑 beforeBuildCommand）
+        run: node scripts/prepare-desktop-resources.mjs
+
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --lib
