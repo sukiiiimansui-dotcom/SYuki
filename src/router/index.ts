@@ -16,6 +16,11 @@ const Bilibili = () => import('../components/views/Bilibili.vue')
 const NetMusic = () => import('../components/views/NetMusic.vue')
 const MemoryPanel = () => import('../components/views/MemoryPanel.vue')
 const WorldMap = () => import('../components/views/WorldMap.vue')
+// 世界地图扩展页（T6-6）：四个新页面同样走懒加载，不拖慢主 chunk
+const WorldDistrictLive = () => import('../components/views/worldmap/DistrictLive.vue')
+const WorldDistrictViz = () => import('../components/views/worldmap/DistrictViz.vue')
+const WorldMapLibrary = () => import('../components/views/worldmap/MapLibrary.vue')
+const WorldPhoneOverlay = () => import('../components/views/worldmap/PhoneOverlay.vue')
 
 // 1. 定义路由表
 const routes = [
@@ -73,6 +78,28 @@ const routes = [
     path: '/memory',
     name: 'MemoryPanel',
     component: MemoryPanel,
+  },
+  // 世界地图扩展页（T6-6）：只追加，不动上面任何既有路由。
+  // 用 /world/xxx 前缀挂在既有 /world 下面，语义上是一组页面。
+  {
+    path: '/world/district-live',
+    name: 'WorldDistrictLive',
+    component: WorldDistrictLive,
+  },
+  {
+    path: '/world/district-viz',
+    name: 'WorldDistrictViz',
+    component: WorldDistrictViz,
+  },
+  {
+    path: '/world/maplib',
+    name: 'WorldMapLibrary',
+    component: WorldMapLibrary,
+  },
+  {
+    path: '/world/phone-overlay',
+    name: 'WorldPhoneOverlay',
+    component: WorldPhoneOverlay,
   },
 ]
 

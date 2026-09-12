@@ -4161,6 +4161,8 @@ dependencies = [
  "if-addrs",
  "image",
  "indoc",
+ "libc",
+ "md5",
  "mdns-sd",
  "ndarray",
  "once_cell",

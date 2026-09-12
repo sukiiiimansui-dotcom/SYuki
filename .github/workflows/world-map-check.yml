@@ -1,13 +1,18 @@
-name: 世界地图 · 编译检查
+name: 世界地图 · 多平台编译验证与全平台构建
 
-# 只做「编译能不能过」这件轻活，几分钟出结果；
-# 完整的 Android APK 打包走 build-android.yml（手动触发）。
+# 两段式设计：
+#   ① 「编译验证」——推送到 feat/** 或 main 就自动跑：矩阵覆盖 Linux x64 / Windows / macOS / Linux arm64，
+#      目的是尽早抓到「只在某个平台编不过」的代码。
+#      这不是假想需求：我们真踩过一次 —— schedule.rs 里用 libc::localtime_r 取本地时间，
+#      它是 Unix 专属，Windows 上直接编不过；多平台矩阵就是为这种问题准备的。
+#   ② 「全平台打包」——手动触发（workflow_dispatch，默认开启）：四端都出安装包，
+#      其中 APK 是我们实际使用的产物（桌面端只是验证可打包性）。
 #
 # 注意：不要给 checkout 加 `lfs: true` —— 本仓库 .gitattributes 没有 LFS 规则、
-# `git lfs ls-files` 为 0 个文件，而服务器上又缺 LFS 对象，加了会 404 直接挂。
+# `git lfs ls-files` 为 0，而服务器上又缺 LFS 对象，加了会 404 直接挂。
 on:
   push:
-    branches: ['feat/world-map', 'feat/**']
+    branches: ['feat/**', 'main']
     paths:
       - 'src/**'
       - 'src-tauri/**'
@@ -18,12 +23,22 @@ on:
   pull_request:
     branches: ['main', 'master']
   workflow_dispatch:
+    inputs:
+      build_packages:
+        description: '编译验证通过后，继续打全平台安装包（含 APK）'
+        type: boolean
+        default: true
+      skip_desktop:
+        description: '只打 APK，跳过桌面端安装包（桌面端很慢，各 20~40 分钟）'
+        type: boolean
+        default: false
 
 concurrency:
   group: world-map-check-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # ───────────────────────── ① 前端 ─────────────────────────
   frontend:
     name: 前端 · 类型检查 + 构建
     runs-on: ubuntu-latest
@@ -48,23 +63,77 @@ jobs:
       - name: 构建前端
         run: npx vite build
 
-      - name: 世界地图前端模块自检（DOM 桩 + 真实几何数据，不依赖手机接口）
+      - name: 世界地图前端模块自检（不依赖手机接口）
         run: |
-          if [ -f public/world_map/npc.js ]; then
-            node -e "
-              const fs=require('fs');
-              for (const f of ['world_time.js','world_weather.js','transport.js','npc.js','phone.js']) {
-                const p='public/world_map/'+f;
-                if (!fs.existsSync(p)) { console.error('缺少 '+p); process.exit(1); }
-                const src=fs.readFileSync(p,'utf8');
-                if (src.length < 1000) { console.error(p+' 内容异常'); process.exit(1); }
-              }
-              console.log('✅ 5 个前端模块齐备');
-            "
-          fi
+          node -e "
+            const fs=require('fs');
+            for (const f of ['world_time.js','world_weather.js','transport.js','npc.js','phone.js']) {
+              const p='public/world_map/'+f;
+              if (!fs.existsSync(p)) { console.error('缺少 '+p); process.exit(1); }
+              const src=fs.readFileSync(p,'utf8');
+              if (src.length < 1000) { console.error(p+' 内容异常'); process.exit(1); }
+            }
+            console.log('✅ 5 个前端模块齐备');
+          "
 
-  rust:
-    name: Rust · cargo check + 单元测试
+  # ─────────────── ② 多平台编译验证（本次新增的核心）───────────────
+  rust-check:
+    name: 编译验证 · ${{ matrix.label }}
+    needs: frontend
+    strategy:
+      fail-fast: false          # 一个平台挂了也要看到其余平台的结果
+      matrix:
+        include:
+          - { os: ubuntu-latest,    label: Linux x64 }
+          - { os: ubuntu-24.04-arm, label: Linux arm64 }
+          - { os: windows-latest,   label: Windows x64 }
+          - { os: macos-latest,     label: macOS arm64 }
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Tauri 所需的 Linux 依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libgbm-dev libegl1-mesa-dev \
+            libx11-dev libxcb1-dev libxrandr-dev libxcomposite-dev libxcursor-dev \
+            libxi-dev libxtst-dev libwayland-dev libdbus-1-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri
+          cache-targets: true
+          cache-on-failure: true
+          shared-key: world-map-${{ matrix.os }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      # cargo 不会执行 tauri.conf.json 的 beforeBuildCommand，
+      # 而 build.rs 会校验 .bundled_resources/ 下的资源（缺了直接报
+      # "resource path .bundled_resources/data_manifest.json doesn't exist"）。
+      # 该脚本零第三方依赖，直接 node 跑即可。
+      - name: 准备 Tauri 打包资源
+        run: node scripts/prepare-desktop-resources.mjs
+
+      - name: cargo check（${{ matrix.label }}）
+        working-directory: src-tauri
+        run: cargo check --lib
+
+  # ─────────────────── ③ 单元测试（只在一个平台跑）───────────────────
+  rust-test:
+    name: Rust · 世界地图单元测试
+    needs: frontend
     runs-on: ubuntu-latest
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -89,19 +158,185 @@ jobs:
           workspaces: ./src-tauri
           cache-targets: true
           cache-on-failure: true
-          shared-key: world-map-check
+          shared-key: world-map-test
 
-      # cargo 不会执行 tauri.conf.json 的 beforeBuildCommand，
-      # 而 build.rs 会校验 .bundled_resources/ 下的资源（缺了直接报
-      # "resource path .bundled_resources/data_manifest.json doesn't exist"）。
-      # 该脚本零第三方依赖，直接 node 跑即可。
-      - name: 准备 Tauri 打包资源（cargo 不跑 beforeBuildCommand）
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: 准备 Tauri 打包资源
         run: node scripts/prepare-desktop-resources.mjs
 
-      - name: cargo check
-        working-directory: src-tauri
-        run: cargo check --lib
-
-      - name: 世界地图单元测试（坐标/几何/渲染）
+      - name: 世界地图单元测试
         working-directory: src-tauri
         run: cargo test --lib world_map -- --nocapture
+
+  # ─────────────── ④ 全平台安装包（手动触发；桌面端）───────────────
+  packages-desktop:
+    name: 安装包 · ${{ matrix.label }}
+    needs: [rust-check, rust-test]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_packages && !inputs.skip_desktop }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest,   label: Windows x64,  bundles: nsis }
+          - { os: macos-latest,     label: macOS arm64,  bundles: dmg }
+          - { os: ubuntu-22.04,     label: Linux x64,    bundles: deb }
+          - { os: ubuntu-24.04-arm, label: Linux arm64,  bundles: deb }
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: "s"
+      CARGO_PROFILE_RELEASE_STRIP: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Tauri 所需的 Linux 依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libgbm-dev libegl1-mesa-dev \
+            libx11-dev libxcb1-dev libxrandr-dev libxcomposite-dev libxcursor-dev \
+            libxi-dev libxtst-dev libwayland-dev libdbus-1-dev pkg-config
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri
+          cache-targets: true
+          cache-on-failure: true
+          shared-key: world-map-pkg-${{ matrix.os }}
+
+      - name: 安装依赖
+        run: pnpm i --frozen-lockfile
+
+      # tauri build 会自动跑 tauri.conf.json 的 beforeBuildCommand（含资源准备），
+      # 这里不需要像 cargo check 那样手动补脚本。
+      - name: 打包（${{ matrix.label }}）
+        run: pnpm tauri build --bundles ${{ matrix.bundles }}
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.label }}
+          if-no-files-found: warn
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/release/bundle/**/*.AppImage
+
+  # ─────────────── ⑤ 全平台安装包（手动触发；APK 才是我们用的）───────────────
+  package-android:
+    name: 安装包 · Android APK
+    needs: [rust-check, rust-test]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_packages }}
+    runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: "s"
+      CARGO_PROFILE_RELEASE_STRIP: "true"
+      # ubuntu-latest 运行器自带 Android SDK/NDK，路径固定
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      NDK_HOME: /usr/local/lib/android/sdk/ndk
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: 'pnpm'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri
+          cache-targets: true
+          cache-on-failure: true
+          shared-key: ${{ runner.os }}-world-map-pkg-android
+
+      - name: 安装 Linux 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libgbm-dev libegl1-mesa-dev \
+            libx11-dev libxcb1-dev libxrandr-dev libxcomposite-dev libxcursor-dev \
+            libxi-dev libxtst-dev libwayland-dev libdbus-1-dev pkg-config zip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: 安装依赖
+        run: pnpm i --frozen-lockfile
+
+      - name: 生成图标并准备 Android 工程
+        run: |
+          pnpm run init
+          pnpm android:prepare
+
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-wm-${{ hashFiles('src-tauri/gen/android/**/*.gradle*', 'src-tauri/gen/android/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # 签名密钥是可选的：有就走正式签名（产物可直接装机），没有就只出未签名 APK。
+      # 这样「验证能否打包」不会被密钥配置挡住。
+      - name: 配置 Android 签名（密钥存在时）
+        env:
+          KEY_B64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEY_B64" ]; then
+            echo "未配置签名密钥 → 跳过，只产出未签名 APK"
+            exit 0
+          fi
+          echo "$KEY_B64" | base64 -d > $HOME/upload-keystore.p12
+          cat > src-tauri/gen/android/keystore.properties << EOF
+          storeFile=$HOME/upload-keystore.p12
+          keyAlias=$KEY_ALIAS
+          password=$KEY_PASS
+          EOF
+          echo "已写入 keystore.properties"
+
+      - name: 构建 APK
+        run: pnpm android:build
+
+      - name: 上传 APK（我们实际使用的产物）
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-map-apk
+          if-no-files-found: error
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk

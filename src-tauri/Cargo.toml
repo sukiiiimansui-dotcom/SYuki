@@ -73,6 +73,13 @@ sha2 = "0.10"
 tempfile = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
+# 世界地图 Rust 模块（真源 world_map_rs/src）需要的两个小依赖：
+#   · md5 —— 草图/日程的稳定随机种子（details.rs / sketch.rs / schedule.rs / maplib.rs）
+# 本来就在 Cargo.lock 里（tokio 的间接依赖），离线也能解析。
+# 本地时间改走已有的 chrono（原来是 libc::localtime_r，那是 Unix 专属，
+# 在 Windows 上编不过 —— 多平台编译验证会直接拦下来）。
+md5 = "0.8"
+
 # LAN Sync
 axum = { version = "0.7", features = ["tokio"] }
 mdns-sd = "0.11"
