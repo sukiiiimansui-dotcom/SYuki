@@ -575,6 +575,10 @@ pub fn run() {
             // __cmd__xxx 并 pub use，generate_handler 按同名路径找宏（见 mod.rs 的说明）
             world_map::bridge::world_map_district_stream,
             world_map::bridge::world_map_district_stream_cancel,
+            // ── 实时数据：定位 / 天气（前端 worldMapApi.location / .weather）──
+            // 前缀同样是**必须的**：命令宏在定义处 world_map/live.rs 生成
+            world_map::live::world_map_location,
+            world_map::live::world_map_weather,
             utils::log_bridge::get_log_history,
             utils::log_bridge::open_log_window,
             utils::log_bridge::is_log_window_open,

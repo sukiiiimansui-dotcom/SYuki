@@ -110,10 +110,20 @@ impl GeoSource {
     pub fn new(cache: impl AsRef<Path>) -> Self {
         let cache = cache.as_ref().to_path_buf();
         let _ = std::fs::create_dir_all(&cache);
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(20))
-            .build()
-            .ok();
+        // ⚠️ LingChat 专有改动（同步真源时注意保留）：
+        // 这里拉的是 https://geo.datav.aliyun.com/...，而 reqwest 0.13 默认用
+        // rustls-platform-verifier，Android 上不预先初始化会直接 panic ——
+        // 见 src/utils/tls.rs 的模块说明。真源工程（Termux/桌面调试服务）用裸 builder 没问题，
+        // 但搬进 Tauri 必须走 build_tls_config()。
+        let client = crate::utils::tls::build_tls_config()
+            .ok()
+            .and_then(|tls| {
+                reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(20))
+                    .tls_backend_preconfigured(tls)
+                    .build()
+                    .ok()
+            });
         Self { cache, client }
     }
 

@@ -144,6 +144,32 @@ export function bindScheduleToPhone(sch: SchedulePayload | null) {
   return list.length
 }
 
+/**
+ * 天气 → 手机天气界面。
+ *
+ * 为什么需要这一步：`public/world_map/phone.js` 自己写死了 `fetch('/api/weather')`，
+ * 而 APK 里没有那个 HTTP 服务 —— 手机天气页会一直空着。数据层（worldMapApi）已经能
+ * 双通路取到天气，这里负责把它喂给 phone.js 的界面。
+ * 拿不到天气时返回 0（不注入），让手机页保持"暂无数据"而不是显示上一次的陈旧值。
+ */
+export function bindWeatherToPhone(w: any) {
+  const PHONE = worldModule<any>('PHONE')
+  if (!PHONE || typeof PHONE.setWeather !== 'function' || !w) return 0
+  if (w.error) return 0
+  const cur = w?.current || w?.weather?.current || w
+  PHONE.setWeather({
+    city: cur?.city ?? '',
+    desc: cur?.desc ?? cur?.weather_desc ?? '',
+    temp: cur?.temp_c ?? cur?.tempC ?? cur?.temp ?? null,
+    humidity: cur?.humidity ?? null,
+    wind: cur?.wind_kmph ?? null,
+    isRain: !!(cur?.is_rain ?? cur?.isRain),
+    isSnow: !!(cur?.is_snow ?? cur?.isSnow),
+    isFog: !!(cur?.is_fog ?? cur?.isFog),
+  })
+  return 1
+}
+
 /** 一次性绑定（页面进来时调一次即可，内部有节流） */
 export async function bindWorldData(opts?: { force?: boolean }): Promise<{
   characters: number
@@ -167,6 +193,13 @@ export async function bindWorldData(opts?: { force?: boolean }): Promise<{
     bindScheduleToPhone(sch)
   } catch {
     sch = null
+  }
+  // 天气：phone.js 自己写死了 fetch('/api/weather')，真壳里拿不到 —— 由这里喂给它。
+  // 失败不抛（拿不到天气不该让整轮 bind 失败），手机页会保持"暂无数据"。
+  try {
+    bindWeatherToPhone(await worldMapApi.weather())
+  } catch {
+    /* 天气拿不到就算了，不影响角色与日程绑定 */
   }
   return {
     characters: Math.max(nNpc, nPhone),

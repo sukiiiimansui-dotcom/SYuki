@@ -365,8 +365,12 @@ async function loadTimeWeather() {
     const temp = cur?.temp_c ?? cur?.tempC ?? cur?.temp
     const desc = cur?.desc || cur?.weather_desc || cur?.description
     weatherText.value = temp !== undefined ? `🌤 ${desc ? desc + ' ' : ''}${temp}°C` : ''
+    // 喂给特效层：startFx() 读 window.__WM_WEATHER__ 决定下不下雨/雪/雾。
+    // 之前全仓只有"读"没有"写"，所以 T4-2 的粒子永远不会出现 —— 这一行就是那条断掉的线。
+    ;(window as any).__WM_WEATHER__ = w || null
   } catch {
     weatherText.value = ''
+    ;(window as any).__WM_WEATHER__ = null
   }
 }
 

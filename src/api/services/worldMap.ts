@@ -294,7 +294,9 @@ export const worldMapApi = {
   weather: async (city?: string): Promise<WorldWeather> => {
     if (!isTauriRuntime()) return http.weather(city)
     try {
-      return await withTimeout(invoke<WorldWeather>('world_map_weather', { city }), 5000, '天气')
+      // 26000 > Rust 侧 25 秒：前端若先放弃，Rust 那边跑完虽然会写进 30 分钟缓存，
+      // 但用户第一次进页面就是没天气。宁可多等 25 秒拿一次，之后 30 分钟都是秒回。
+      return await withTimeout(invoke<WorldWeather>('world_map_weather', { city }), 26000, '天气')
     } catch {
       /* 命令不存在 / 超时 → 降级 */
     }

@@ -15,6 +15,10 @@ pub mod coord;
 pub mod details;
 pub mod facilities;
 pub mod geo;
+// 实时数据通路：定位（world_map_location）+ 天气（world_map_weather）。
+// 同样要按**完整路径**注册：world_map::live::world_map_location —— 命令宏在定义处
+// （本文件的子模块 live.rs）生成，写 world_map::world_map_location 会 E0433。
+pub mod live;
 pub mod maplib;
 pub mod osm;
 pub mod render;
