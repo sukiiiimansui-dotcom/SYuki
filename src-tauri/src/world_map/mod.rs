@@ -70,6 +70,16 @@ pub mod stream;
 pub mod summary;
 pub mod transport;
 
+// ── P 系列补齐的两个**纯函数**模块（不 import tauri，可脱离工程 rustc --test 真跑）──
+//   · bookmark —— P3-1 地图存档书签：adcode 链路 / 小区 seed / 地图库 key 的
+//                 抽取、恢复 patch 与老存档兼容（`#[serde(default)]`）。
+//                 放在这里而不是 game_status.rs：存档兼容性不该只能靠"看代码"验证。
+//   · offline  —— P5-4 离线可用性：本地缓存有什么、要看的区域能不能离线命中。
+//                 判据只有"本地有没有这份缓存"，**从不 ping 网络**
+//                 （最需要离线的时候不该再等一次超时）。
+pub mod bookmark;
+pub mod offline;
+
 // 注意：`bridge` 里的两个命令要按**完整路径**注册进 lib.rs 的 invoke_handler：
 //   world_map::bridge::world_map_district_stream / ..._cancel
 // 不能写 `world_map::world_map_district_stream` —— 命令宏除了函数本体，还会在
@@ -624,6 +634,12 @@ pub async fn world_map_maplib_list(
 /// 为什么默认干跑：Python 侧在真实删除路径上误删过 119 张地图缓存，
 /// 这个开关是那次事故换来的纪律 —— 想真删必须自己写清楚。
 /// `maxMb` 不传就用地图库自己的上限（默认 300MB）。
+///
+/// 默认值的解析挪进了 `maplib::resolve_dry_run`（纯函数）：这条纪律最需要被单测钉住，
+/// 而命令层要 `AppHandle`、手机上跑不了 —— 留在这一层等于永远测不到。
+///
+/// 返回见 `maplib::MapLib::enforce_limit` 的文档（干跑与真删**同形**：
+/// `removed` / `freed` / `victims` / `victims_detail`，真删额外附 `stats`）。
 #[tauri::command]
 pub async fn world_map_maplib_cleanup(
     app: AppHandle,
@@ -633,8 +649,42 @@ pub async fn world_map_maplib_cleanup(
 ) -> Result<Value, String> {
     let lib = maplib::MapLib::new(maplib_root(&app));
     let max_bytes = max_mb.map(|m| (m * 1048576.0) as u64);
-    let dry_run = dry_run.or(dry).unwrap_or(true);
-    Ok(lib.enforce_limit(max_bytes, dry_run))
+    Ok(lib.enforce_limit(max_bytes, maplib::resolve_dry_run(dry_run, dry)))
+}
+
+/// **离线可用清单**（P5-4）：现在有哪些区域可以离线看、占了多少空间。
+///
+/// 纯读本地（`geo/` 的 geojson 缓存 + `maplib/` 的地图与布局），
+/// **本命令不发任何网络请求** —— 判据只有"本地有没有这份缓存"，
+/// 绝不用"ping 一下看通不通"来判在线（最需要离线的时候不该再等一次超时）。
+///
+/// 返回结构见 `offline::summary`：
+/// ```text
+/// { offline: true, note,
+///   geo:  { count, bytes, mb, adcodes:[{adcode,level,full,bytes,mtime}] },
+///   maps: { count, bytes, mb, adcodes:[…], kinds:{…}, styles:{…} },
+///   layouts: { count, keys:[…] },
+///   areas: [{ adcode, level, offline, coverage, covered_by, has_geo, geo_full,
+///             geo_bytes, maps, kinds, styles, last_access }],
+///   totals: { areas, offline_areas, geojson, maps, layouts } }
+/// ```
+/// `areas` 是 geo 缓存与地图库的并集（按 adcode 升序）；`coverage` =
+/// `exact`（自己有缓存）/ `ancestor`（上级有，`covered_by` 指出是哪一级）/ `none`。
+#[tauri::command]
+pub async fn world_map_offline_available(app: AppHandle) -> Result<Value, String> {
+    // 主缓存目录 + 只读预热目录都算"本地有什么"：`make_source` 会做只读目录预热，
+    // 这里不建 source（那会构造 reqwest client），只按目录名扫。
+    let mut geo = offline::scan_geo_dir(&cache_dir(&app));
+    for extra in extra_dirs() {
+        geo.extend(offline::scan_geo_dir(&extra));
+    }
+    geo.sort_by(|a, b| a.adcode.cmp(&b.adcode).then(b.full.cmp(&a.full)));
+    geo.dedup_by(|a, b| a.adcode == b.adcode && a.full == b.full);
+
+    let lib = maplib::MapLib::new(maplib_root(&app));
+    let maps = lib.list(None, None, None, "recent");
+    let layouts = lib.list_layouts(Some(200));
+    Ok(offline::summary(&geo, &maps, &layouts))
 }
 
 /// 日程 → 角色此刻在做什么、该出现在地图的哪个位置（`schedule.rs`）

@@ -49,6 +49,10 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.ling_chat"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <!-- 屏幕方向：**不锁**（跟随系统自动旋转）。
+             2026-09-12 先试过 `sensorLandscape`，机主随后改主意：
+             「UI 还是根据屏幕自适应吧」—— 那就让布局去适配屏幕，而不是让屏幕迁就布局。
+             这也与官方原版一致（官方 AndroidManifest 同样不写 screenOrientation）。 -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"

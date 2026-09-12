@@ -323,7 +323,12 @@ impl ToolPermissionConfig {
 
     // ─── 内部方法 ───
 
-    fn with_default_tools(tool_names: impl IntoIterator<Item = String>) -> Self {
+    /// 首次初始化时的权限矩阵：默认场景映射 + 三个场景组 + 一个 `enabled = false`
+    /// 的 default 角色组。
+    ///
+    /// `pub(crate)`：所有单测都从这里起步 —— 直接照抄一份默认矩阵去搭测试环境，
+    /// 迟早会和真实默认值走偏（P3-4 的可达性用例就是这么被要求"跑整条链路"的）。
+    pub(crate) fn with_default_tools(tool_names: impl IntoIterator<Item = String>) -> Self {
         let all_tools: HashSet<_> = tool_names.into_iter().collect();
 
         // 默认映射

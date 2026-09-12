@@ -15,6 +15,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// 默认容量上限：300 MB（超出按 LRU 清理）
 pub const DEFAULT_MAX_BYTES: u64 = 300 * 1024 * 1024;
 
+/// 一次清理最多回报多少条"可清理项"的明细（`removed` 仍是全量）。
+/// 50 条足够用户在确认弹窗里看懂"要删什么"，再多就只是把 IPC 包撑大。
+pub const VICTIMS_MAX: usize = 50;
+
+/// 干跑开关的解析（**破坏性接口的纪律**）。
+///
+/// `dry_run` → `dry` → **默认 `true`**：想真删必须自己把 `false` 写出来。
+/// 这条纪律是拿事故换的 —— Python 侧在真实删除路径上误删过 119 张地图缓存。
+///
+/// 抽成纯函数的理由：命令层要 `AppHandle`（手机上跑不了单测），
+/// 而"默认值是不是 true"恰恰是**最需要被测到**的那一行。
+pub fn resolve_dry_run(dry_run: Option<bool>, dry: Option<bool>) -> bool {
+    dry_run.or(dry).unwrap_or(true)
+}
+
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -276,45 +291,78 @@ impl MapLib {
     /// 容量控制（LRU）。
     ///
     /// **务必先 `dry_run = true` 看会删什么** —— Python 侧就是在这里误删过 119 张图。
+    ///
+    /// 返回（**干跑与真删同形**，前端不用分两套读法）：
+    /// ```text
+    /// { removed, freed, freed_mb, dry_run,
+    ///   victims: [id…],            // ≤50 条，前端既有契约
+    ///   victims_detail: [ {id,kind,adcode,style,bytes,path,lastAccess,reason} … ],
+    ///   victims_truncated: bool,   // 超过 50 条时为 true（removed 仍是全量）
+    ///   stats }                    // 只有真删才附（干跑附了会让人以为已经生效）
+    /// ```
+    /// `victims` 在干跑时是"**将要**删的"，真删时是"**确实**删掉的"
+    /// （`delete_locked` 返回 false 的条目不会被算进去）。
     pub fn enforce_limit(&self, max_bytes: Option<u64>, dry_run: bool) -> Value {
         let _g = self.guard();
         let limit = max_bytes.unwrap_or(self.max_bytes);
         if limit == 0 {
-            return json!({"removed": 0, "freed": 0, "dry_run": dry_run});
+            // 0 = 不设上限（`max_bytes` 的既有语义），不是"清空"
+            return json!({
+                "removed": 0, "freed": 0, "freed_mb": 0.0, "dry_run": dry_run,
+                "victims": [], "victims_detail": [], "victims_truncated": false,
+            });
         }
         let items = self.list_locked(None, None, None, "recent"); // 最近访问在前
         let mut total: u64 = items.iter().map(|e| e.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0)).sum();
         let mut removed = 0usize;
         let mut freed: u64 = 0;
         let mut victims: Vec<String> = Vec::new();
+        let mut details: Vec<Value> = Vec::new();
         for e in items.iter().rev() {
             if total <= limit {
                 break;
             }
             let sz = e.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0);
             let eid = e.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let detail = json!({
+                "id": eid,
+                "kind": e.get("kind").cloned().unwrap_or(json!("other")),
+                "adcode": e.get("adcode").cloned().unwrap_or(json!("")),
+                "style": e.get("style").cloned().unwrap_or(json!("")),
+                "bytes": sz,
+                "path": e.get("path").cloned().unwrap_or(json!("")),
+                "lastAccess": e.get("lastAccess").cloned().unwrap_or(json!(0)),
+                // 只有一种淘汰原因：LRU（最久没访问的先走）
+                "reason": "lru",
+            });
             if dry_run {
                 victims.push(eid);
+                details.push(detail);
                 removed += 1;
                 freed += sz;
                 total -= sz;
                 continue;
             }
             if self.delete_locked(&eid, true) {
+                victims.push(eid);
+                details.push(detail);
                 removed += 1;
                 freed += sz;
                 total -= sz;
             }
         }
+        let truncated = victims.len() > VICTIMS_MAX;
+        victims.truncate(VICTIMS_MAX);
+        details.truncate(VICTIMS_MAX);
         let mut out = json!({
             "removed": removed, "freed": freed,
             "freed_mb": ((freed as f64 / 1048576.0) * 100.0).round() / 100.0,
             "dry_run": dry_run,
+            "victims": victims,
+            "victims_detail": details,
+            "victims_truncated": truncated,
         });
-        if dry_run {
-            victims.truncate(50);
-            out["victims"] = json!(victims);
-        } else {
+        if !dry_run {
             out["stats"] = self.stats_locked();
         }
         out
@@ -536,6 +584,145 @@ mod tests {
         let total: u64 = lib.list(None, None, None, "recent").iter()
             .map(|e| e["bytes"].as_u64().unwrap_or(0)).sum();
         assert!(total <= 4000, "清理后总量应达标，实际 {total}");
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  P5-4：占用读数 + 手动清理（**破坏性接口默认干跑**）
+    // ══════════════════════════════════════════════════════════════
+
+    /// `dry_run` 的默认值必须是 **true**：参数一个都不给时绝不能真删。
+    /// 这是整个 P5-4 里最要命的一行（Python 侧就是在这儿误删过 119 张图）。
+    #[test]
+    fn dry_run_defaults_to_true_in_every_shape() {
+        assert!(resolve_dry_run(None, None), "两个参数都不给 → 必须干跑");
+        assert!(resolve_dry_run(Some(true), None));
+        assert!(resolve_dry_run(None, Some(true)));
+        // 显式 false 才是真删（dry_run 优先于旧名 dry）
+        assert!(!resolve_dry_run(Some(false), None));
+        assert!(!resolve_dry_run(None, Some(false)));
+        assert!(!resolve_dry_run(Some(false), Some(true)));
+        assert!(resolve_dry_run(Some(true), Some(false)), "dry_run 优先");
+    }
+
+    /// 干跑：把"会删什么"说清楚（张数 / 字节 / 明细），但**一个文件都不许动**。
+    #[test]
+    fn dry_run_reports_victims_without_touching_anything() {
+        let t = Tmp::new("dry2");
+        let lib = t.lib();
+        let mut rels = Vec::new();
+        for i in 0..3 {
+            let rel = t.png(&format!("d{i}.png"), 1000);
+            lib.register(&rel, "region", &format!("44{i:04}"), "gaode", json!({}));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            rels.push(rel);
+        }
+        let before = lib.stats();
+        // 上限 1000 字节 → 3000 字节要删到 ≤1000，至少两张进候选
+        let r = lib.enforce_limit(Some(1000), true);
+        assert_eq!(r["dry_run"], json!(true));
+        assert!(r["removed"].as_u64().unwrap() > 0, "必须给出会删几张: {r}");
+        assert!(r["freed"].as_u64().unwrap() > 0, "必须给出会释放多少字节: {r}");
+        assert_eq!(r["victims_truncated"], json!(false));
+
+        let victims: Vec<String> = r["victims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(!victims.is_empty(), "干跑必须列出『哪些』: {r}");
+        // 明细：每条都带 kind/bytes/path，且 bytes 之和 == freed
+        let details = r["victims_detail"].as_array().unwrap();
+        assert_eq!(details.len(), victims.len());
+        let sum: u64 = details.iter().map(|d| d["bytes"].as_u64().unwrap_or(0)).sum();
+        assert_eq!(sum, r["freed"].as_u64().unwrap(), "明细字节之和要等于 freed: {r}");
+        for d in details {
+            assert!(d["id"].as_str().is_some());
+            assert_eq!(d["kind"], json!("region"));
+            assert_eq!(d["reason"], json!("lru"));
+            assert!(d["path"].as_str().is_some_and(|p| !p.is_empty()));
+            assert!(d["lastAccess"].as_u64().is_some());
+        }
+
+        // 干跑的底线：索引没变、文件全在、统计一模一样
+        assert_eq!(lib.stats(), before, "干跑不许改变任何统计");
+        assert_eq!(lib.list(None, None, None, "recent").len(), 3);
+        for rel in &rels {
+            assert!(lib.abs(rel).exists(), "干跑删了文件: {rel}");
+        }
+        // 干跑**不**附 stats：附了会让人以为已经生效
+        assert!(r.get("stats").is_none());
+    }
+
+    /// 真删：只删干跑列出来的那些（一个不多、一个不少），其余文件与索引都留着。
+    #[test]
+    fn real_cleanup_deletes_exactly_the_listed_victims() {
+        let t = Tmp::new("real2");
+        let lib = t.lib();
+        let mut rels = Vec::new();
+        for i in 0..4 {
+            let rel = t.png(&format!("e{i}.png"), 1000);
+            lib.register(&rel, "district", &format!("44{i:04}"), "dark", json!({}));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            rels.push(rel);
+        }
+        // ① 先干跑拿到"会删哪些"（这正是用户点确认前看到的那份名单）
+        let plan = lib.enforce_limit(Some(2000), true);
+        let victims: Vec<String> = plan["victims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(!victims.is_empty());
+        // ② 用户点了确认 → 真删
+        let done = lib.enforce_limit(Some(2000), false);
+        assert_eq!(done["dry_run"], json!(false));
+        assert_eq!(done["removed"], json!(victims.len()), "真删数量应与名单一致");
+        assert_eq!(done["victims"], plan["victims"], "真删回报的名单应与干跑一致");
+        assert!(done["stats"].is_object(), "真删后附最新统计，前端不用再查一次");
+
+        let alive = lib.list(None, None, None, "recent");
+        for (i, rel) in rels.iter().enumerate() {
+            let id = format!("district:44{i:04}:dark");
+            let was_victim = victims.iter().any(|v| *v == id);
+            assert_eq!(
+                lib.abs(rel).exists(),
+                !was_victim,
+                "文件 {rel} 的去留必须与名单一致（was_victim={was_victim}）"
+            );
+            assert_eq!(alive.iter().any(|e| e["id"] == json!(id)), !was_victim);
+        }
+        let total: u64 = alive.iter().map(|e| e["bytes"].as_u64().unwrap_or(0)).sum();
+        assert!(total <= 2000, "真删后应降到上限以内，实际 {total}");
+    }
+
+    /// 没超上限时：一件都不删（别把"清理"做成"定时清空"）。
+    #[test]
+    fn cleanup_is_a_no_op_when_under_the_cap() {
+        let t = Tmp::new("under");
+        let lib = t.lib();
+        let rel = t.png("keep.png", 1000);
+        lib.register(&rel, "region", "440100", "gaode", json!({}));
+        let r = lib.enforce_limit(Some(10 * 1024 * 1024), false);
+        assert_eq!(r["removed"], json!(0));
+        assert_eq!(r["freed"], json!(0));
+        assert_eq!(r["victims"], json!([]));
+        assert!(lib.abs(&rel).exists());
+    }
+
+    /// `max_bytes = 0` 的既有语义是"不设上限"（不是"清空"）——
+    /// 这条一旦反过来，就是又一次 119 张的事故。
+    #[test]
+    fn zero_cap_means_unlimited_not_delete_everything() {
+        let t = Tmp::new("zero");
+        let lib = t.lib();
+        let rel = t.png("z.png", 5000);
+        lib.register(&rel, "region", "440100", "gaode", json!({}));
+        let r = lib.enforce_limit(Some(0), false);
+        assert_eq!(r["removed"], json!(0));
+        assert!(lib.abs(&rel).exists(), "0 = 不限容量，绝不能当成清空");
+        assert_eq!(r["victims"], json!([]));
     }
 
     #[test]

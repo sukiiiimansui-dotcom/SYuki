@@ -577,6 +577,8 @@ pub fn run() {
             world_map::world_map_maplib_stats,
             world_map::world_map_maplib_list,
             world_map::world_map_maplib_cleanup,
+            // P5-4：离线可用清单（纯读本地：geo 缓存 + 地图库 + 布局缓存）
+            world_map::world_map_offline_available,
             world_map::world_map_schedule,
             world_map::world_map_transport_plan,
             world_map::world_map_osm_summary,

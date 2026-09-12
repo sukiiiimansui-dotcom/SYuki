@@ -55,6 +55,7 @@
 // 不删掉更深的路径 —— 用户退回省级看一眼，还能一键再跳回区县。
 
 import { computed, ref, type Ref } from 'vue'
+import { errTextKey } from '@/components/views/worldsim/wsErr'
 import worldMapApi, { type WorldLocation } from '@/api/services/worldMap'
 import {
   adminChain,
@@ -168,10 +169,20 @@ export interface UseWorldSimOptions {
   }
   /** 舞台当前尺寸（CSS 像素）——每次取图都要带上，字号才能看得清 */
   getViewport: () => { w: number; h: number }
+  /**
+   * i18n 翻译函数。**注入而不是内部 `useI18n()`** —— 这个 composable 会被 node 自检
+   * 直接调用（没有组件实例），`useI18n()` 在那种场合会抛
+   * `Must be called at the top of a setup function`。注入后两边都能用：
+   * 组件传 vue-i18n 的 `t`，自检传一个 `key => key` 的桩。
+   * 不传时退化成"原样返回键名"（可读性差但绝不崩）。
+   */
+  t?: (key: string, params?: Record<string, unknown>) => string
 }
 
 export function useWorldSim(opts: UseWorldSimOptions) {
   const { geo, getViewport } = opts
+  // 错误文案要人话：技术信息先经 wsErr.classifyError 归类，再查 `worldsim.err.*`
+  const tr = opts.t ?? ((k: string) => k)
 
   /* ── 状态 ────────────────────────────────────────────────────────────── */
   const step = ref<SimStep>('boot')
@@ -272,7 +283,10 @@ export function useWorldSim(opts: UseWorldSimOptions) {
       if (data && data.adcode === ad) stage.value = data
       return data
     } catch (e) {
-      error.value = `取「${ad}」的地图失败：${e instanceof Error ? e.message : String(e)}`
+      {
+        const info = errTextKey(e)
+        error.value = `取「${ad}」的地图失败：${tr(info.key)}${info.detail ? `（${info.detail}）` : ''}`
+      }
       return null
     } finally {
       if (!o.silent) busy.value = false
@@ -456,7 +470,10 @@ export function useWorldSim(opts: UseWorldSimOptions) {
       await startInner()
     } catch (e) {
       step.value = 'locateFailed'
-      note.value = `初始化时出了点问题：${e instanceof Error ? e.message : String(e)}（可以手动选城市继续）`
+      {
+        const info = errTextKey(e)
+        note.value = `初始化时出了点问题：${tr(info.key)}（可以手动选城市继续）`
+      }
     }
   }
 

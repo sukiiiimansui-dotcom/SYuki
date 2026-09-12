@@ -117,11 +117,28 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
 export const CROWD_STEP = 0.62
 
 /**
+ * 错开散点的降级参数（P5-5：低端机）。
+ *
+ * `candidates` 是「挤在一起时最多试几个候选点」——原来固定 64，是 O(N²) 里的那个 N；
+ * 20 人以内的真实场景用 12 个候选点就够散开（试不到就留在原地，反正不会死循环）。
+ * `crowd` 是「压了几个人」那个计数的算法：`exact` 两两比对（原样），
+ * `bucket` 按 0.25 格分桶统计（O(N)，只在低端机上用 —— 这个数只是给角标看的）。
+ */
+export interface SpreadOpts {
+  candidates?: number
+  crowd?: 'exact' | 'bucket'
+}
+
+/** 默认候选点数（= 原来的行为；低端机走 wsPerf 的 SPREAD_CANDIDATES_LOW） */
+export const SPREAD_CANDIDATES = 64
+
+/**
  * 把一个点周围的人错开成螺旋散点（确定性）。
  *
  * @param pts  原始位置（格子坐标），顺序 = 参与顺序（同一份输入永远同一份输出）
  * @param grid 网格边长（散点会被夹在 [0.8, grid-0.8] 里，别跑出图外）
  * @param radius 命中半径（格子）：比它更近的两个点算「重叠」
+ * @param opts 降级参数（**默认值 = 老行为**，不传就是原样；见 SpreadOpts）
  * @returns 错开后的坐标 + 每个位置压了几个人（crowd）
  *
  * 说明：这是**贪心**散点，不是全局最优，但足够稳定且可复现 —— 而且
@@ -131,9 +148,13 @@ export function spreadCrowd(
   pts: { x: number; y: number }[],
   grid = 28,
   radius = 1.5,
+  opts: SpreadOpts = {},
 ): { x: number; y: number; crowd: number }[] {
   const n = Math.max(1, Number(grid) || 28)
   const r = Math.max(0.2, Number(radius) || 1.5)
+  // 候选点数：低端机上少试几次（默认 64 = 老行为，别改）
+  const maxCand = Math.max(1, Math.trunc(Number(opts?.candidates) || SPREAD_CANDIDATES))
+  const crowdMode: 'exact' | 'bucket' = opts?.crowd === 'bucket' ? 'bucket' : 'exact'
   const lo = 0.8
   const hi = n - 0.8
   const clamp = (v: number) => Math.min(hi, Math.max(lo, v))
@@ -145,8 +166,8 @@ export function spreadCrowd(
     let y = clamp(Number(p?.y) || n / 2)
     if (taken.some((t) => Math.hypot(t.x - x, t.y - y) < r)) {
       let placed = false
-      // 最多找 64 个候选点（20 人以内一定够；再多也只是继续叠着，不会死循环）
-      for (let i = 1; i <= 64; i++) {
+      // 最多找 maxCand 个候选点（20 人以内一定够；再多也只是继续叠着，不会死循环）
+      for (let i = 1; i <= maxCand; i++) {
         const ang = i * GOLDEN_ANGLE
         const rad = CROWD_STEP * Math.sqrt(i)
         const cx = clamp(x + Math.cos(ang) * rad)
@@ -166,7 +187,17 @@ export function spreadCrowd(
     out.push({ x, y, crowd: 1 })
   }
 
-  // 统计每个落点周围挤了几个人（只在「同一个落点」这一档上算，给 UI 标数量用）
+  // 统计每个落点周围挤了几个人（只在「同一个落点」这一档上算，给 UI 标数量用）。
+  // 两种算法：exact = 两两比对（原样，O(N²)）；bucket = 按 0.25 格分桶（O(N)，低端机用）。
+  // ⚠️ 只改**统计方式**，不动落点坐标 —— 坐标必须与高档逐字一致，
+  //    否则同一台设备换个档位，地图上的人会整体挪位置（最难受的那种 bug）。
+  if (crowdMode === 'bucket') {
+    const buckets = new Map<string, number>()
+    const keyOf = (p: { x: number; y: number }) => `${Math.round(p.x * 4)}:${Math.round(p.y * 4)}`
+    for (const p of out) buckets.set(keyOf(p), (buckets.get(keyOf(p)) || 0) + 1)
+    for (const p of out) p.crowd = buckets.get(keyOf(p)) || 1
+    return out
+  }
   for (let i = 0; i < out.length; i++) {
     let c = 1
     for (let j = 0; j < out.length; j++) {
@@ -176,6 +207,39 @@ export function spreadCrowd(
     out[i].crowd = c
   }
   return out
+}
+
+/** 错开结果的最近 4 份快取（模块级：同一份输入在页面各处都命中） */
+const spreadMemo = new Map<string, { x: number; y: number; crowd: number }[]>()
+
+/**
+ * 带缓存的错开（P5-5）。
+ *
+ * 为什么值得缓存：`placed` 每次名单/坐标变化都会重算一次错开，而实际触发点里
+ * 有不少「名单没变也要刷新」的路径（到达后 `loadActors(true)`、点浮标刷新、
+ * 面板里改头像）。输入完全没变时，重算是纯浪费 —— 而且返回**同一个数组引用**
+ * 还能让下游（头像层/气泡层）的 props 不变，连带省掉一轮 diff。
+ * 容量故意很小（4）：这只是「上次那份」的快取，不是缓存层。
+ */
+export function spreadCrowdMemo(
+  pts: { x: number; y: number }[],
+  grid = 28,
+  radius = 1.5,
+  opts: SpreadOpts = {},
+): { x: number; y: number; crowd: number }[] {
+  const list = pts || []
+  const key = `${grid}|${radius}|${opts?.candidates ?? SPREAD_CANDIDATES}|${opts?.crowd || 'exact'}|${list
+    .map((p) => `${p?.x},${p?.y}`)
+    .join(';')}`
+  const hit = spreadMemo.get(key)
+  if (hit) return hit
+  const val = spreadCrowd(list, grid, radius, opts)
+  spreadMemo.set(key, val)
+  if (spreadMemo.size > 4) {
+    const oldest = spreadMemo.keys().next().value
+    if (oldest !== undefined) spreadMemo.delete(oldest)
+  }
+  return val
 }
 
 /* ══════════════════════════════════════════════════════════════════

@@ -38,7 +38,6 @@
         {{ themeName === 'mint' ? '🍃 薄荷' : '🧊 玻璃' }}
       </button>
       <button class="ws-btn ws-btn--ghost" type="button" :title="`深浅：${darkLabel}`" @click="cycleDark">{{ dark ? '🌙' : '☀️' }}</button>
-      <button class="ws-btn ws-btn--ghost" type="button" title="清掉「上次位置」，从加载动画重新走一遍引导" @click="restart">重新引导</button>
     </header>
 
     <!-- ── 定位来源 / 上次位置：如实告诉用户「这个位置是怎么来的」──────── -->
@@ -47,24 +46,48 @@
       <span v-if="areaLabel" class="ws-srcbar__now">当前：{{ areaLabel }}</span>
       <span v-if="restored" class="ws-srcbar__hint">（首次引导已走过，直接进上次位置）</span>
       <span v-if="note" class="ws-srcbar__note">{{ note }}</span>
+      <!-- 「重新引导」是低频且带破坏性的动作（会清掉「上次位置」重走一遍），
+           放在顶栏会把它挤到第二行（手机上实测 8 个元素超宽约 64px）；
+           挪到这条信息行的最右边：同一条视觉带、不抢主操作，顶栏因此能保持**一行**
+           —— 机主要求「手机跟电脑版一样」，桌面就是一行。 -->
+      <button
+        class="ws-btn ws-btn--ghost ws-srcbar__reset"
+        type="button"
+        title="清掉「上次位置」，从加载动画重新走一遍引导"
+        @click="restart"
+      >
+        {{ t('worldsim.restart') }}
+      </button>
     </div>
 
     <!-- ── 舞台 ─────────────────────────────────────────────────────── -->
     <main class="ws-stage">
       <!-- ① 初始化：加载动画「正在展开世界…」 -->
       <section v-if="step === 'boot'" class="ws-center">
-        <WsLoading variant="init" text="正在展开世界…" sub="准备全国省级轮廓（只画省界）…" />
+        <!-- delay=0：这是首屏（底下没有任何内容可看），一进来就该有东西，不是「等 180ms」的场景 -->
+        <WsLoading
+          variant="init"
+          :delay="0"
+          :text="t('worldsim.loader.init.text')"
+          :sub="t('worldsim.loader.init.sub')"
+          :hint="t('worldsim.loader.init.longHint')"
+        />
       </section>
 
       <!-- ② 定位中 -->
       <section v-else-if="step === 'locating'" class="ws-center">
-        <WsLoading variant="locate" text="正在定位" :sub="gpsHint" />
+        <WsLoading
+          variant="locate"
+          :text="t('worldsim.loader.locate.text')"
+          :sub="gpsHint"
+          :hint="t('worldsim.loader.locate.longHint')"
+        />
       </section>
 
       <!-- ③ 定位失败 / 被拒：手动选城市 + 用 IP 估测，两条路都给 -->
       <section v-else-if="step === 'locateFailed'" class="ws-center">
         <div class="ws-card ws-locatefail">
-          <WsLoading variant="locate" size="sm" text="没能自动定位" :sub="note" />
+          <WsLoading variant="locate" size="sm" :text="t('worldsim.loader.locateFailed.text')" :sub="note" />
           <div class="ws-note">可以走下面任一条路，都能继续往下玩：</div>
           <div class="ws-locatefail__ops">
             <button class="ws-btn ws-btn--primary" type="button" @click="openManual('手动选择省 / 市 / 区县')">
@@ -82,9 +105,20 @@
 
       <!-- ④ 地图（国/省/市/区县）—— v-html 注入后端 SVG，点击靠事件委托
            手势（平移/捏合/滚轮/复位）只作用在 .ws-geo__pan 这一层变换容器上，
-           SVG 本体不动 —— 详见 useWorldSimGestures 的说明。 -->
-      <section v-else class="ws-mapwrap">
-        <div ref="geoHost" class="ws-geo" @click="onGeoClick">
+           SVG 本体不动 —— 详见 useWorldSimGestures 的说明。
+
+           ⚠️ 这里**不能写裸的 `v-else`**（曾经就是）：`v-else` 只能判断"上面那串条件都不成立"，
+           而它上面那串只覆盖 boot/locating/locateFailed —— 于是进入 `neighborhood` 之后
+           它**照样渲染**，和 ⑦ 的小区图叠在一起：区县图占满整个舞台、小区图被挤到最下面
+           只剩一条缝（真机复现：面包屑已经到「小区」了，屏幕上还是「区县 · 1 个区划」）。
+           所以必须显式排除 neighborhood。`confirm` / `manual` 是**浮在地图上的弹层**，
+           要保留地图打底，故不排除它们。 -->
+      <section v-else-if="step !== 'neighborhood'" class="ws-mapwrap">
+        <!-- `ws-sea-*`：舞台底色 = 当前**地图风格**的海色。
+             地图是横的（≈1.32）、容器是竖的，用 contain 等比缩放必然在上下留两条；
+             只有底色与 SVG 里的海色**逐字一致**，那两条才不可见（否则像地图被挤在中间）。
+             ⚠️ 这三个色值必须与后端 `render_geo::style_of()` 的 `bg` 保持一致。 -->
+        <div ref="geoHost" class="ws-geo" :class="`ws-sea-${style}`" @click="onGeoClick">
           <div
             ref="geoPan"
             class="ws-geo__pan"
@@ -106,9 +140,15 @@
           <button type="button" title="复位（也支持双击地图 / 双指双击）" @click="gsReset(false)">⟲</button>
         </div>
 
-        <!-- 区域切换 / 首次加载的加载动画（盖在舞台上，不销毁已有的图） -->
+        <!-- 区域切换 / 首次加载的加载动画（盖在舞台上，不销毁已有的图）
+             不给进度条：这张图是后端现画的，前端算不出百分比 —— 算不出来就**不装**确定进度 -->
         <div v-if="busy" class="ws-mapmask">
-          <WsLoading variant="map" :text="busyText || '正在加载地图'" sub="后端渲染中…" />
+          <WsLoading
+            variant="map"
+            :text="busyText || t('worldsim.loader.map.text')"
+            :sub="t('worldsim.loader.map.sub')"
+            :hint="t('worldsim.loader.map.longHint')"
+          />
         </div>
       </section>
 
@@ -133,8 +173,11 @@
         />
       </div>
 
-      <!-- ⑦ 小区地图（终点） -->
-      <section v-else-if="step === 'neighborhood'" class="ws-neighwrap">
+      <!-- ⑦ 小区地图（终点）
+           ⚠️ 用 `v-if` 而不是 `v-else-if`：它上面紧邻的是 ⑥ 的 `v-if="step === 'manual'"`，
+           写成 `v-else-if` 会把两条本不相干的链悄悄接在一起（读的人很难发现），
+           而它的条件本身是自足的（step === 'neighborhood'），没必要挂靠。 -->
+      <section v-if="step === 'neighborhood'" ref="neighWrap" class="ws-neighwrap">
         <WsDistrict
           ref="districtRef"
           :area="areaLabel || '未知区域'"
@@ -153,7 +196,12 @@
               :selected-id="wsPanel.targetId.value"
               :me-name="meName"
               :zoom="districtScale"
+              :drag="true"
+              :drag-pin="dragPin"
               @pick="onActorPick"
+              @dragstart="onDragStart"
+              @dragmove="onDragMove"
+              @dragend="onDragEnd"
             />
             <WsVehicleMark
               v-for="t in movingTrips"
@@ -163,13 +211,16 @@
               :zoom="districtScale"
             />
             <!-- P5-2：事件气泡（bubble 通道）。铺在同一层里才会跟着地图平移缩放；
-                 位置不在这里算（`WsEventBubble` 用 letterboxOf + 角色的 px/py 自己算）。 -->
+                 位置不在这里算（`WsEventBubble` 用 letterboxOf + 角色的 px/py 自己算）。
+                 P5-5：低性能档下调同时显示的气泡上限、入场动画退化成纯淡入。 -->
             <WsEventBubble
               :bubbles="wsEventBubbles"
               :placed="placedActors"
               :grid="WS_GRID"
               :zoom="districtScale"
               :me-name="meName"
+              :max="bubbleMax"
+              :low="perfLow"
             />
           </template>
         </WsDistrict>
@@ -229,6 +280,7 @@
         @portrait="wsPanel.togglePortrait"
         @goto-chat="onGotoChat"
         @quick="onQuick"
+        @direct="onDirect"
       />
       <WsMePanel
         v-else-if="wsPanel.open.value && wsPanel.isMe.value"
@@ -318,6 +370,19 @@ import WsEventBubble from './WsEventBubble.vue'
 import WsEventFeed from './WsEventFeed.vue'
 import { wsToast, useWsToast } from './wsToast'
 import type { PlacedActor } from './wsActors'
+import {
+  DEFAULT_CELL_M,
+  dropGridAt,
+  estimateTrip,
+  facilityAt,
+  gridPinAt,
+  metersParts,
+  minutesOf,
+  useWsIntervene,
+  type DropCtx,
+} from './wsIntervene'
+// P5-5：性能档位（低端机自动降级 + 手动覆盖）。判定/持久化/fps 表都在这个文件里。
+import { bubbleMaxOf, quantizeZoom, useWsPerf } from './wsPerf'
 import { geoLevelOf, levelLabel } from './wsGeo'
 // P3-3 的接线点：把「现在在哪、谁站在哪」推给 Rust 的 MapRuntime。
 // **不推的后果很隐蔽**：`world_sim_enabled()` 恒 false → 位置指令剥离器不启用、
@@ -336,7 +401,11 @@ const router = useRouter()
 const { t } = useI18n()
 
 /* 皮肤 + 取图器 + 状态机 */
-const theme = useWorldSimTheme()
+/* P5-5：性能档位先建（皮肤与人物层都要读它 —— `ws-perf-low` 的类、
+   气泡上限、zoom 量化、错开精度必须来自**同一个判定**，不能各判各的）。 */
+const perf = useWsPerf()
+const perfLow = perf.low
+const theme = useWorldSimTheme({ lowPerf: perfLow })
 const geo = useWorldSimGeo()
 const geoHost = ref<HTMLElement | null>(null)
 const geoPan = ref<HTMLElement | null>(null)
@@ -353,7 +422,7 @@ const {
   zoomBy,
   shouldSuppressClick,
 } = useWorldSimGestures({ target: geoHost, content: geoPan })
-const sim = useWorldSim({ geo, getViewport: () => sizeForBackend.value })
+const sim = useWorldSim({ geo, getViewport: () => sizeForBackend.value, t })
 
 // 解构出来给模板用：Vue 模板对**顶层** ref 会自动解包，比满篇 `sim.xxx.value` 稳得多
 //（踩过一次：`:value="sim.style"` 忘了 .value，下拉框直接对不上任何选项）。
@@ -404,7 +473,7 @@ const gameStore = useGameStore()
 /** 小区图的网格边长：与 WsDistrict 的 SKETCH_SIZE / 后端 sketch 一致 */
 const WS_GRID = 28
 const wsPanel = useWsPanel()
-const actors = useWsActors({ grid: ref(WS_GRID), areaLabel: sim.areaLabel })
+const actors = useWsActors({ grid: ref(WS_GRID), areaLabel: sim.areaLabel, lowPerf: perfLow })
 const { placed: placedActors } = actors
 /** 面板当前对着的那个人（面板关着 / 对着自己时是 null） */
 const currentActor = computed<PlacedActor | null>(() => {
@@ -422,7 +491,30 @@ const { items: toastItems, clear: clearToasts } = useWsToast()
 
 /** 小区图的手势倍率（WsDistrict 用 defineExpose 露出来）—— 头像层据此抵消缩放 */
 const districtRef = ref<{ gsScale?: number } | null>(null)
-const districtScale = computed(() => Number(districtRef.value?.gsScale) || 1)
+/**
+ * 传给头像层的倍率（P5-5）。
+ *
+ * ⚠️ 这里**必须量化**：`gsScale` 在捏合时逐帧变化，而头像/车辆/气泡每一个都要
+ * 按它重算 style（`scale(1/zoom)`）—— 20 个人就是 20 次/帧的 Vue 更新 + DOM 写入，
+ * 这正是「地图上有人就卡」的主因。量化后同一档内 props 不变 → computed 不重算、
+ * DOM 不重写；低档步长更大（0.25），视觉误差 ≤ 半个步长，肉眼看不出。
+ * 手势状态本身不受影响（`gsScale` 原样用于缩放按钮的禁用判定）。
+ */
+const districtScale = computed(() => quantizeZoom(Number(districtRef.value?.gsScale) || 1, perfLow.value))
+
+/** P5-5：低档同时显示的气泡上限（高档沿用数据层的 WS_BUBBLE_MAX = 4） */
+const bubbleMax = computed(() => bubbleMaxOf(perfLow.value))
+
+/**
+ * P4-4：拖拽落点换算要用的**小地图包裹层**。
+ *
+ * 为什么不去找 WsDistrict 多要 `tx/ty/舞台元素`：那会逼着那个组件多暴露三个内部状态，
+ * 而页面自己就能算 —— 变换容器（`.ws-neigh__pan`）的 `getBoundingClientRect()` 返回的是
+ * **变换之后**的视觉矩形：宽度里已经含了缩放、left/top 里已经含了平移。
+ * 于是 `scale = rect.width / pan.offsetWidth`、原点取 `rect.left/top` 就够了，
+ * 不必知道手势内部存了什么（`WsDistrict` 的 expose 保持原来那一个 `gsScale`）。
+ */
+const neighWrap = ref<HTMLElement | null>(null)
 
 /* ══ P4：行程（谁在路上）════════════════════════════════════════════════════
  * 数据（轮询 + 按时间戳插值 + `world_map:trip` 事件 + 位置回推）全在 useWorldTrips；
@@ -595,16 +687,187 @@ function onGotoChat(a: PlacedActor) {
 }
 
 /**
- * 快捷动作（打招呼/送礼物/约他出门）。
+ * 快捷动作分派（P2-5：三个按钮各自的**真**行为，一处看全）。
  *
- * 现在**没有任何后端能力**，所以这里只负责把事件转发出去（下一步接后端时
- * 直接在这个函数里换成真正调用即可），**可见的提示由 WsCharPanel 弹**
- * —— 提示只留一处，避免同一次点击弹两条 toast。
+ *   · 打招呼   → 复用「去找他聊聊」那条路（跳 /chat，零副作用；见 onGotoChat）
+ *   · 约他出门 → `inviteOut()`：调 `world_map_trip_start` 让**角色动身来找你**
+ *   · 送礼物   → **需求未澄清**（礼物从哪来 / 送完发生什么，机主还没定）：
+ *                这里只留接入点，**绝不自己发明一套礼物系统**。
+ *                说明弹层由 `WsCharPanel` 打开（两个候选方案 + 「还没定」）。
+ *                接入点长这样（方案定了再填）：
+ *                  `world_map_trip_start` 那种 `{req}` 风格的命令，
+ *                  或后端新增 `world_map_gift_send{role,item}` + 好感度/记忆写入。
  */
-function onQuick(_action: string, _a: PlacedActor) {
-  /* 预留：P4/P5 接「打招呼 / 送礼物 / 约他出门」的真实能力时在此处调用 */
+async function onQuick(action: string, a: PlacedActor) {
+  if (action === 'hi') {
+    onGotoChat(a)
+    return
+  }
+  if (action === 'outing') {
+    await inviteOut(a)
+    return
+  }
+  if (action === 'gift') {
+    /* 需求未澄清：什么都不做（面板已经弹了说明层，不会被误当成「点了没反应」） */
+    return
+  }
 }
 
+/* ══ P4-4：玩家干预（下指令 / 把他拖到别处）═════════════════════════════════
+ * 两条入口共用同一条下游：`world_map_trip_start` → `Trip::plan` 起一条行程。
+ *   · 对话指挥（聊天里说「你去便利店」）：模型吐 `⟦wm:…⟧` → Rust 侧
+ *     `directive.rs` 剥离 → `move::dispatch` → 同样的 `Trip::plan`。
+ *     前端**不新增任何后台能力**，这里只是把同一条下游做成地图上的可见入口。
+ *   · 拖拽：屏幕坐标 → 格点 → 最近的设施 → 同一个 `world_map_trip_start`。
+ * 纪律：**开关默认关**（尊重角色自主性），关着时拖拽无效但要给一次提示。 */
+const { on: interveneOn } = useWsIntervene()
+
+/** 拖动中的落点预览（信箱盒子坐标；null = 没在拖） */
+const dragPin = ref<{ x: number; y: number } | null>(null)
+
+/** 格边长：后端 runtime 里有就用它的，没有按 30 米（与 `trip::DEFAULT_CELL_M` 一致） */
+const cellM = computed(() => Number(actors.runtime.value?.cell_m) || DEFAULT_CELL_M)
+
+/** 拖拽换算上下文：变换容器的视觉矩形（含平移缩放）+ 信箱盒子尺寸 */
+function dropCtx(): DropCtx | null {
+  // 变换容器由页面自己查（见 neighWrap 的说明）—— 不越权访问 WsDistrict 的内部 ref
+  const pan = neighWrap.value?.querySelector('.ws-neigh__pan') as HTMLElement | null
+  if (!pan) return null
+  const w = pan.offsetWidth
+  const h = pan.offsetHeight
+  const r = pan.getBoundingClientRect()
+  // 量不到尺寸就不硬算（宁可提示失败，也不要按错的信箱把人挪到别处）
+  if (!w || !h || !r.width || !r.height) return null
+  return {
+    // 视觉矩形的左上角已经含了平移，所以 tx/ty 一律给 0（换算数学见 wsIntervene.dropGridAt）
+    rect: { left: r.left, top: r.top },
+    scale: r.width / w,
+    tx: 0,
+    ty: 0,
+    boxW: w,
+    boxH: h,
+    grid: WS_GRID,
+  }
+}
+
+/** 这一次拖动里有没有已经提示过「开关没开」（避免同一次拖动弹两遍） */
+let dragHinted = false
+
+function onDragStart(a: PlacedActor) {
+  dragPin.value = null
+  dragHinted = false
+  // 开关关着：**一进入拖拽就说清楚**（比等到松手才说体验好），并且不画落点
+  // —— 拖拽在关闭状态下是无效的，画个图钉等于给假希望。
+  if (!interveneOn.value) {
+    wsToast(t('worldsim.intervene.offToast'), 'warn', 3800)
+    dragHinted = true
+    return
+  }
+  if (!a?.name) wsToast(t('worldsim.chat.noRole'), 'warn')
+}
+
+function onDragMove(p: { a: PlacedActor; clientX: number; clientY: number }) {
+  // 开关关着：不画落点（拖完也只会得到一条「去哪儿开」的提示，别给假希望）
+  if (!interveneOn.value) return
+  const ctx = dropCtx()
+  if (!ctx) return
+  const pin = gridPinAt({ x: p.clientX, y: p.clientY }, ctx)
+  dragPin.value = { x: pin.x, y: pin.y }
+}
+
+/** 「210 米 / 1.2 公里」——数字与单位都走 i18n（这里只给数） */
+function distText(meters: number): string {
+  const p = metersParts(meters)
+  return p.km ? t('worldsim.intervene.km', { n: p.value }) : t('worldsim.intervene.m', { n: p.value })
+}
+
+/** 起一条「谁去哪」的行程（拖拽与下指令共用）。`g` 不给就让后端按地名在地图数据里找 */
+async function startTripTo(a: PlacedActor, to: string, g?: { gx: number; gy: number }) {
+  if (!a?.name) {
+    wsToast(t('worldsim.chat.noRole'), 'warn')
+    return
+  }
+  if (!trips.supported.value) {
+    wsToast(t('worldsim.intervene.unsupported'), 'warn')
+    return
+  }
+  tripBusy.value = true
+  try {
+    // `kind: 'walk'` 是**故意显式给的**：拖拽/指挥的语义是「在小区里走过去」，
+    // 不显式给的话后端会按距离自动选（可能来一辆车），那样提示条里的
+    // 「步行 X 分钟」就与实际不符 —— 提示与实际必须是同一个口径。
+    const r = await trips.startTrip({ role: a.name, to, gx: g?.gx, gy: g?.gy, kind: 'walk', cell_m: cellM.value })
+    wsToast(
+      r.ok
+        ? t('worldsim.intervene.started', { name: a.name, place: to })
+        : t('worldsim.intervene.failed', { reason: r.message || '' }),
+      r.ok ? 'ok' : 'warn',
+    )
+  } finally {
+    tripBusy.value = false
+  }
+}
+
+/** 面板里下一条「让他去某地」的指令（对话指挥那条路在地图上的可见入口） */
+async function onDirect(to: string, a: PlacedActor) {
+  await startTripTo(a, to)
+}
+
+/** 送礼物那个按钮的说明层由面板负责；这里不做事（见 onQuick 的注释） */
+
+/** 拖拽松手：反查落点 → 报距离/预计时间 → 起一条「走过去」的行程 */
+async function onDragEnd(p: { a: PlacedActor; clientX: number; clientY: number; moved: boolean }) {
+  dragPin.value = null
+  if (!p.moved) return // 没超过 4px 阈值 = 一次点击（选中由 click 那条路负责）
+  // 默认关：拖拽无效，但要**说清楚去哪儿开**（绝不静默；已在 onDragStart 说过的就不再重复）
+  if (!interveneOn.value) {
+    if (!dragHinted) wsToast(t('worldsim.intervene.offToast'), 'warn', 3800)
+    return
+  }
+  const ctx = dropCtx()
+  if (!ctx) {
+    wsToast(t('worldsim.intervene.noMap'), 'warn')
+    return
+  }
+  const g = dropGridAt({ x: p.clientX, y: p.clientY }, ctx)
+  const fac = facilityAt(actors.runtime.value?.facilities, g.gx, g.gy)
+  // 落到设施附近就报设施名；空地上就如实说「移动到这里」（先用占位，不编地名）
+  const to = fac?.name || t('worldsim.intervene.moveHere')
+  const est = estimateTrip({ gx: p.a.gx, gy: p.a.gy }, g, cellM.value)
+  // ⚠️ 先报「多远 / 走多久」再起程：需求原文「拖到远处要提示距离/预计时间，不要静默瞬移」。
+  //    行程本身就是「走过去」（地图上会画车、行程卡上有进度），所以不存在瞬移。
+  wsToast(
+    t('worldsim.intervene.estimate', { name: p.a.name, place: to, dist: distText(est.meters), min: minutesOf(est.secs) }),
+    'info',
+    3400,
+  )
+  await startTripTo(p.a, to, g)
+}
+
+/**
+ * 约他出门（P2-5）。
+ *
+ * **语义选择**：让**角色动身到玩家所在的位置**（不是玩家自己跑过去）。理由两条：
+ *   ① 玩家的移动：`trip_start` 的 role 认不出玩家（`resolve_origin` 对未知 role 会
+ *      退回 `me`），确实能跑起来，但行程的位置回推是**以 role 为键**写进 runtime
+ *      `actors` 的 → 会凭空多出一个「我」这个角色，污染 AI 上下文与事件引擎的角色表；
+ *   ② 「约」的语义本来就是发起邀请（对方行动），而玩家自己动身 = 「去找他」，
+ *      那件事已经有「去找他聊聊」那条路了。
+ * 例外：如果玩家在对话里被问「你能来吗」，那是模型自己用 ⟦wm:⟧ 指令人物动 —— 不归这里管。
+ */
+async function inviteOut(a: PlacedActor) {
+  if (!a?.name) {
+    wsToast(t('worldsim.chat.noRole'), 'warn')
+    return
+  }
+  const me = placedActors.value.find((x) => x.isMe)
+  if (!me) {
+    wsToast(t('worldsim.action.outingNoMe'), 'warn')
+    return
+  }
+  const to = String(me.place || '').trim() || t('worldsim.action.outingHere')
+  await startTripTo(a, to, { gx: me.gx, gy: me.gy })
+}
 
 /* ── 展示用的派生量 ─────────────────────────────────────────────────── */
 const stageLabel = computed(() => {
@@ -760,6 +1023,11 @@ watch(
       void loadActors()
       // P5-2：进到小区图才给事件引擎打火（它要 `scene` 才有意义；start 幂等）
       wsEvents.start()
+      // P5-5：性能档位在这里收口 —— 启动 fps 表（仅在用户开了显示时）+
+      // 补一次自动采样（核数/内存/实测帧率三信号，只降不升，结果落 localStorage）。
+      // 为什么等到这一步：采样必须在**地图真的在跑**的时候做，boot/定位阶段
+      // 本来就有一堆首屏开销，那时候测出来的帧率会把好机器误判成低端机。
+      perf.bootstrap()
     }
     // 离开小区图时把面板收掉：立绘的 73MB 必须在离开那一刻还回去
     if (s !== 'neighborhood' && wsPanel.open.value) wsPanel.closePanel()
@@ -779,14 +1047,44 @@ watch(
   () => scheduleSyncRuntime('area-changed'),
 )
 
+/* ── 画布尺寸要真的传下去（否则地图会被整体缩小 + 上下留大片空白）─────────────
+ * 现象（真截图量的）：容器 407×759，但后端拿到的是**兜底** 900×620 →
+ * SVG 按 900 宽排版、再被 `preserveAspectRatio: meet` 缩到 407 → **缩放 45%**：
+ *   · 字缩到 45%，手机上几乎看不清（省名只有 4~5px）
+ *   · 内容只占中间 ~280px 高，**上下各留 ~240px 空白**，屏幕白扔三分之一
+ * 为什么会这样：`start()` 在 `onMounted` 里跑，那一刻舞台（`<section v-else>` 的
+ * `.ws-geo`）**还没挂载** → `useElementSize` 量不到 → `sizeForBackend` 回落到兜底；
+ * 等舞台真出现、量到 407×759 时，图已经按 900×620 画好并缓存了，**不会再取一次**。
+ * 修法：视口尺寸**真的变了**就按新尺寸重取当前这一级（`retryStage` 用的就是当前视口；
+ * `loadStage` 的缓存键本来就含 w/h，所以换尺寸 = 新的缓存项，不会串图）。
+ * 只在已进入地图阶段时重取，并且防抖 250ms（旋屏/软键盘弹出会连续触发）。 */
+let sizeResizeTimer: number | null = null
+watch(
+  () => `${sizeForBackend.value.w}x${sizeForBackend.value.h}`,
+  (now, before) => {
+    // 首次不触发：那时地图还没开始取（`before` 是兜底值，取了也是白取）
+    if (!before || now === before) return
+    // 只在**真的已经有一张图**的时候重取：引导/定位阶段本来就没图，重取是白跑一次网络
+    if (!sim.stage.value) return
+    if (sizeResizeTimer !== null) window.clearTimeout(sizeResizeTimer)
+    sizeResizeTimer = window.setTimeout(() => {
+      sizeResizeTimer = null
+      void retryStage()
+    }, 250)
+  },
+)
+
 onBeforeUnmount(() => {
   // 离开页面：面板关掉（立绘随之释放）+ 清掉还在排队的 toast 定时器
   wsPanel.closePanel()
   clearToasts()
   if (syncTimer !== null) window.clearTimeout(syncTimer)
+  if (sizeResizeTimer !== null) window.clearTimeout(sizeResizeTimer)
   // P5-2：卸载前把待写记忆收一遍（自然检查点），再停掉 tick 轮询、广播订阅与气泡
   void wsEvents.drainMemory()
   wsEvents.stop()
+  // P5-5：fps 表也是 rAF —— 页面走了就必须停（与 useWorldTrips / WsTripCard 同款纪律）
+  perf.teardown()
   // ⚠️ 必须清：注入的开关就是「runtime 里有没有 scene」，
   // 不清的话回到聊天页会继续带着上次的地图上下文跟模型说话。
   void clearRuntime()
@@ -802,9 +1100,20 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.5em;
-  flex-wrap: wrap;
+  /* ⚠️ 曾经是 `wrap`：手机（430px）上 8 个元素放不下 → 折成两行，跟桌面对不上。
+   * 机主的要求是「手机做成跟电脑版一样」——桌面就是一行。现在：① 低频的「重新引导」
+   * 挪到下面那条信息行；② 这里改成 nowrap + 子项可收缩（min-width:0）；
+   * ③ 极窄屏（<340px）兜底横向滚动，宁可滑也不要折行（折行会把整个舞台往下推）。 */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
   padding: 0.7em 0.9em 0.4em;
 }
+.ws-top::-webkit-scrollbar { display: none; }
+.ws-top > * { min-width: 0; flex-shrink: 0; }
+/* 只有品牌名允许被压缩（其余是按钮，压了会难点） */
+.ws-top .ws-brand { flex-shrink: 1; overflow: hidden; }
+.ws-top .ws-brand__name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ws-brand {
   display: flex;
   align-items: center;
@@ -825,6 +1134,40 @@ onMounted(() => {
 .ws-spacer {
   flex: 1;
 }
+
+/* ══ 宽扁屏幕（横屏手机 / 超宽窗口）：chrome 收紧 + 底栏改悬浮 ══════════════════
+ * 为什么需要单独一档（实测数据，915×412 横屏 20:9）：
+ *   顶栏 83 + 信息行 30 + 底栏 82 = **195px，占屏高 47%**；留给地图的舞台只剩 889×241，
+ *   后端按 contain 一缩，中国地图只有约 318px 宽、左右各空 300px。
+ * 判据用 **min-aspect-ratio** 而不是 max-width：竖屏平板（768×1024）不该走这一档，
+ * 而 915×412 的手机该走 —— 区别在**长宽比**，不在宽度。
+ * 这一档做两件事：① 顶栏/信息行压到最紧（省约 50px）；② 底栏**脱离文档流浮在底部**
+ * （再省 82px）。舞台因此从 241px 涨到约 370px，地图宽度约 +53%。 */
+@media (min-aspect-ratio: 2/1) {
+  .ws-top { padding: 0.28em 0.6em 0.1em; gap: 0.35em; }
+  .ws-top .ws-btn { padding: 0.15em 0.5em; }
+  .ws-brand__ico { display: none; }   /* 横屏省地方：图标让位给标题文字 */
+  .ws-srcbar { padding: 0 0.6em 0.15em; gap: 0.35em; }
+  .ws-stage { margin: 0 0.6em 0.4em; }
+  /* 底栏浮起来：它只承载「主按钮 + 定位提示」，压在图上比占一条 82px 的带子划算 */
+  .ws-foot {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 6;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.6em;
+    padding: 0.3em 0.7em 0.5em;
+    /* 渐隐托底：按钮压在浅蓝海面上也要看得清 */
+    background: linear-gradient(to top, var(--ws-bg) 55%, transparent);
+    pointer-events: none;   /* 空隙不许吃掉地图手势 */
+  }
+  .ws-foot > * { pointer-events: auto; }
+  .ws-foot__hint { flex: 1; min-width: 0; }
+  .ws-foot__ops { flex: 0 0 auto; }
+}
 .ws-sel {
   font: inherit;
   color: var(--ws-fg);
@@ -837,11 +1180,19 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.5em;
-  flex-wrap: wrap;
+  /* 顶栏改成一行之后，「重新引导」挪到了这里，所以这行也要 nowrap：
+     它自己折行同样会把舞台往下推。极窄屏靠横向滚动兜底。 */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
   padding: 0 0.9em 0.4em;
   font-size: 0.86em;
   color: var(--ws-fg-dim);
 }
+.ws-srcbar::-webkit-scrollbar { display: none; }
+.ws-srcbar > * { flex-shrink: 0; }
+/* 「重新引导」推到最右：同一条视觉带里，不与定位信息抢注意力 */
+.ws-srcbar__reset { margin-left: auto; }
 .ws-srcbar__now {
   color: var(--ws-fg);
   font-weight: 600;

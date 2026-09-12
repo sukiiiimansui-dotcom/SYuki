@@ -479,6 +479,114 @@ pub fn render(inp: &SummaryInput<'_>) -> String {
     out
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  待写记忆 → 注入块（P5-3）
+// ═══════════════════════════════════════════════════════════════════
+
+/// 一次注入最多带几行「待写记忆」。
+///
+/// 为什么有上限：这段文本进的是 system prompt，每一行都在跟「附近」「最近」
+/// 抢模型的注意力；五行已经足够说清"刚才发生了什么"，再多就成事件日志了。
+/// 超出的行**留在队列里**（下一轮注入接着写），不是丢掉。
+pub const MEMORY_LINES_MAX: usize = 5;
+
+/// 把事件引擎攒下的 `旁白: …` 行拼成注入文本里的一块（**纯函数**）。
+///
+/// 返回 `(块文本, 已交付的下标)`：
+///   · 没有可注入的行 → `(String::new(), vec![])` —— 调用方 `push_str` 上去
+///     **一个字节都不多**（世界模拟没跑、或队列空时，注入文本与 P5-2 之前逐字相同）；
+///   · 第二个分量是给调用方**消费队列**用的：这些行的内容**已经在这一轮注入里
+///     交付给模型了**，留在队列里下一轮就会重复注入。
+///     它 = 渲染出来的那几行 ∪ 与「最近：…」重复而没渲染的行 ∪ 队列内重复的行
+///     ∪ 空白行。**没被交付的行一个都不会出现**在这种下标里（没渲染又没被
+///     「最近」覆盖的行必须留着，下一轮接着讲）。
+///
+/// 三条规则（顺序即优先级）：
+///   1. **去重**（[`memory_key`]）：与「最近：…」那一行同一件事不写第二遍，
+///      队列内部重复的行也只留第一条 —— 同一句话在这一轮注入里最多出现一次；
+///   2. **上限** `limit`：从**最旧的一行**开始取（FIFO）—— 攒了一堆时按发生顺序
+///      逐轮讲完，语序不会乱，也不会漏掉任何一行（每一轮都消费掉交付过的那几行）；
+///   3. 空白行直接跳过（不占名额，也只能被消费掉 —— 留着永远不会被渲染）。
+///
+/// 为什么不是"取最新的几行"：注入是**当下感**，队列里最新的几行当然更"当下"，
+/// 但那样攒下来的旧行会永远轮不到（新事件一直插队），最后被 `PENDING_MEMORY_MAX`
+/// 当成垃圾丢掉 —— 角色的经历就这么静默消失了。FIFO 慢一点，但一句不落。
+pub fn memory_block(lines: &[&str], recent: Option<&str>, limit: usize) -> (String, Vec<usize>) {
+    if lines.is_empty() {
+        return (String::new(), Vec::new());
+    }
+    let recent_key = recent.map(memory_key);
+    let mut picked: Vec<usize> = Vec::new();
+    let mut delivered: Vec<usize> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for (i, raw) in lines.iter().enumerate() {
+        let key = memory_key(raw);
+        // 空白行：渲染不了，也没有任何信息 —— 直接算"处理过了"（消费掉，别占名额）
+        if key.is_empty() {
+            delivered.push(i);
+            continue;
+        }
+        // ① 与「最近：…」重复：内容已经在注入里了 → 交付，不渲染
+        if recent_key.as_deref() == Some(key.as_str()) {
+            delivered.push(i);
+            continue;
+        }
+        // ② 队列内部重复：第一条已经交付过 → 这一条也算交付
+        if seen.iter().any(|s| *s == key) {
+            delivered.push(i);
+            continue;
+        }
+        if limit == 0 || picked.len() >= limit {
+            // 到上限了：这一行**没**交付，留在队列里下一轮再讲
+            continue;
+        }
+        seen.push(key);
+        picked.push(i);
+        delivered.push(i);
+    }
+    if picked.is_empty() {
+        return (String::new(), delivered);
+    }
+    let mut out = String::from("\n记忆：");
+    out.push_str(
+        &picked
+            .iter()
+            .map(|&i| lines[i].trim())
+            .collect::<Vec<_>>()
+            .join("；"),
+    );
+    (out, delivered)
+}
+
+/// 「同一句话」的判据（去重用）。
+///
+/// 两条通路描述同一件事时，文字并不逐字相同：
+///   · `events::memory_line` → `旁白: 在便利店买了伞`（待写记忆那一路）
+///   · `summary::last_event` → `刚才在便利店买了伞`（「最近：…」那一路，会补时间词）
+/// 所以这里统一剥掉 `旁白` 前缀、开头的时间词，以及全部空白与句读，
+/// 剩下的当钥匙比 —— 相同就是同一件事。
+///
+/// 宁可漏（判不出重复，多说一遍）也不要错杀：所以只剥**开头**的时间词，
+/// 不碰正文里的字。
+fn memory_key(s: &str) -> String {
+    let mut t = s.trim();
+    if let Some(rest) = t.strip_prefix("旁白") {
+        t = rest.trim_start_matches([':', '：', ' ', '\u{3000}']);
+    }
+    for w in [
+        "刚才", "刚刚", "刚", "现在", "正在", "已经", "昨天", "今天", "早上", "中午",
+        "下午", "晚上",
+    ] {
+        if let Some(rest) = t.strip_prefix(w) {
+            t = rest;
+            break;
+        }
+    }
+    t.chars()
+        .filter(|c| !c.is_whitespace() && !"。，、！？；：,.!?;:".contains(*c))
+        .collect()
+}
+
 /// 注入指纹（FNV-1a 64）。**直接对拼好的文本取指纹**：
 /// 文本没变 = 什么都没变，比维护一份"参与字段清单"（漏一个字段就静默不更新）稳得多。
 ///
@@ -746,5 +854,96 @@ mod tests {
         assert_eq!(zh_period(20), "晚上");
         assert_eq!(zh_period(9), "上午");
         assert_eq!(zh_period(2), "深夜");
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  P5-3：待写记忆 → 注入块
+    // ══════════════════════════════════════════════════════════════
+
+    /// 没有待写记忆 → 空块 + 空下标（调用方拼上去一个字节都不多）。
+    #[test]
+    fn memory_block_is_empty_when_there_is_nothing_to_write() {
+        assert_eq!(memory_block(&[], None, 5), (String::new(), Vec::new()));
+        assert_eq!(memory_block(&[], Some("刚才在便利店买了伞"), 5), (String::new(), Vec::new()));
+        // 空白行渲染不出东西，但也不该留在队列里烂着 → 算"处理过了"
+        assert_eq!(memory_block(&["   ", "\t"], None, 5), (String::new(), vec![0, 1]));
+    }
+
+    /// 按发生顺序渲染，一次最多 limit 行；**没渲染的不许算交付**（否则那几行就丢了）。
+    #[test]
+    fn memory_block_renders_in_order_and_never_drops_the_backlog() {
+        let lines = ["旁白: 一", "旁白: 二", "旁白: 三", "旁白: 四", "旁白: 五", "旁白: 六", "旁白: 七"];
+        let (block, delivered) = memory_block(&lines, None, 5);
+        assert_eq!(block, "\n记忆：旁白: 一；旁白: 二；旁白: 三；旁白: 四；旁白: 五");
+        assert_eq!(delivered, vec![0, 1, 2, 3, 4], "只交付渲染出来的那几行");
+        // 剩下的下一轮接着讲（FIFO，不插队）
+        let (block2, delivered2) = memory_block(&lines[5..], None, 5);
+        assert_eq!(block2, "\n记忆：旁白: 六；旁白: 七");
+        assert_eq!(delivered2, vec![0, 1]);
+        // limit = 0：一行都不渲染，也不交付（调用方会原样留着）
+        assert_eq!(memory_block(&lines, None, 0).0, "");
+        assert!(memory_block(&lines, None, 0).1.is_empty());
+    }
+
+    /// 与「最近：…」同一件事 → 不写第二遍，但**算已交付**（内容已经在注入里了）。
+    #[test]
+    fn memory_block_dedupes_against_the_recent_line() {
+        let lines = ["旁白: 在便利店买了伞", "旁白: 遇到阿离"];
+        let (block, delivered) = memory_block(&lines, Some("刚才在便利店买了伞"), 5);
+        assert_eq!(block, "\n记忆：旁白: 遇到阿离");
+        assert_eq!(delivered, vec![0, 1], "被「最近」覆盖的那行也算交付");
+        // 全部都被覆盖 → 空块，但两行都算交付（不然它们会永远赖在队列里）
+        let (block2, delivered2) = memory_block(&lines[..1], Some("刚才在便利店买了伞"), 5);
+        assert_eq!(block2, "");
+        assert_eq!(delivered2, vec![0]);
+    }
+
+    /// 队列内部重复：只渲染第一条，其余算交付（同一句话不在一轮里说两遍）。
+    #[test]
+    fn memory_block_dedupes_within_the_queue() {
+        let lines = ["旁白: 同一件事", "旁白: 另一件", "旁白: 同一件事"];
+        let (block, delivered) = memory_block(&lines, None, 5);
+        assert_eq!(block, "\n记忆：旁白: 同一件事；旁白: 另一件");
+        assert_eq!(delivered, vec![0, 1, 2]);
+        // 重复项**不占** limit 名额：下面三条里有一条是重复的，五条上限下应全渲染
+        let lines2 = ["旁白: a", "旁白: a", "旁白: b"];
+        let (block2, _) = memory_block(&lines2, None, 2);
+        assert_eq!(block2, "\n记忆：旁白: a；旁白: b");
+    }
+
+    /// 判据归一：`旁白:` 前缀、开头时间词、空白与句读都不影响"是不是同一句话"。
+    #[test]
+    fn memory_key_ignores_prefix_timewords_and_punctuation() {
+        let base = memory_key("旁白: 在便利店买了伞");
+        assert_eq!(base, "在便利店买了伞");
+        for variant in [
+            "旁白：在便利店买了伞",
+            "旁白 在便利店买了伞",
+            "刚才在便利店买了伞",
+            "刚刚在便利店买了伞",
+            "在便利店买了伞。",
+            " 在便利店，买了伞 ",
+        ] {
+            assert_eq!(memory_key(variant), base, "{variant} 应判为同一句话");
+        }
+        // 不同的两件事绝不能被判成同一件（错杀 = 丢记忆）
+        assert_ne!(memory_key("旁白: 在便利店买了伞"), memory_key("旁白: 在咖啡馆买了伞"));
+        assert_ne!(memory_key("旁白: 去了公园"), memory_key("旁白: 去了公园门口"));
+        assert_eq!(memory_key("   "), "");
+    }
+
+    /// 同一条「最近」行与队列混合时：该渲染的渲染、该去重的去重、该留的留。
+    #[test]
+    fn memory_block_mixes_dedupe_limit_and_backlog_in_one_pass() {
+        let lines = [
+            "旁白: 在便利店买了伞", // 0 与「最近」重复 → 交付，不渲染
+            "旁白: 去了公园",       // 1 渲染
+            "旁白: 去了公园",       // 2 队列内重复 → 交付，不渲染
+            "旁白: 遇到阿离",       // 3 渲染
+            "旁白: 天黑了",         // 4 超上限 → 留着
+        ];
+        let (block, delivered) = memory_block(&lines, Some("刚才在便利店买了伞"), 2);
+        assert_eq!(block, "\n记忆：旁白: 去了公园；旁白: 遇到阿离");
+        assert_eq!(delivered, vec![0, 1, 2, 3], "第 4 条没交付，必须留在队列里");
     }
 }

@@ -20,6 +20,8 @@
         <span class="ws-ef__t">{{ t('worldsim.events.title') }}</span>
         <span v-if="events.length" class="ws-tag">{{ events.length }}</span>
         <span class="ws-spacer" />
+        <!-- P5-5：fps 只在用户手动开启时出现（默认关），所以这里不是常驻元素 -->
+        <span v-if="fpsOn" class="ws-ef__fps" :title="t('worldsim.perf.fpsHint')">{{ fps }} fps</span>
         <span v-if="running" class="ws-ef__dot ws-anim-breathe" aria-hidden="true" />
         <span class="ws-ef__caret" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
       </button>
@@ -46,6 +48,37 @@
           </button>
         </div>
         <div class="ws-ef__hint">{{ t('worldsim.events.channelHint') }}</div>
+
+        <!-- P5-5：性能档位（自动判定 + 手动覆盖 + fps 显示开关）。
+             放这里是因为这块已经是「这一页的设置」的归处（三通道开关也在这儿），
+             不用再开一个设置页。 -->
+        <div class="ws-ef__perf">
+          <span class="ws-ef__label">{{ t('worldsim.perf.title') }}</span>
+          <button
+            v-for="o in TIER_OPTIONS"
+            :key="o"
+            class="ws-chip"
+            :class="{ 'is-on': tierPref === o }"
+            type="button"
+            :aria-pressed="tierPref === o"
+            :title="t(`worldsim.perf.${o}Hint`)"
+            @click="perf.setTier(o)"
+          >
+            {{ t(`worldsim.perf.${o}`) }}
+          </button>
+          <span class="ws-spacer" />
+          <button
+            class="ws-chip"
+            :class="{ 'is-on': fpsOn }"
+            type="button"
+            :aria-pressed="fpsOn"
+            :title="t('worldsim.perf.fpsHint')"
+            @click="perf.setFps(!fpsOn)"
+          >
+            {{ t('worldsim.perf.fps') }}
+          </button>
+        </div>
+        <div class="ws-ef__hint">{{ t('worldsim.perf.now', { tier: tierLabel, why: whyText }) }}</div>
 
         <!-- 事件流（最新在上） -->
         <div v-if="events.length" class="ws-ef__list">
@@ -119,6 +152,8 @@ import {
   type WsEventItem,
   type WsPendingLine,
 } from '@/composables/useWorldEvents'
+// P5-5：性能档位（判定/持久化/fps 都在 wsPerf 里；这里只做界面）
+import { readPerfEnv, useWsPerf, type PerfTierPref } from './wsPerf'
 
 const props = withDefaults(
   defineProps<{
@@ -143,7 +178,14 @@ const props = withDefaults(
     running?: boolean
     /** 最近一条错误（有就显示出来，绝不静默） */
     error?: string
-    /** 默认展开（面板本身就是「事件」的归处，默认摊开更符合直觉） */
+    /**
+     * 初始是否展开。
+     *
+     * ⚠️ 2026-09-12 由 `true` 改成 **`false`**（真机截图后定的）：它常驻在小区图右下角，
+     * 展开时约占**半个屏幕宽**，会把刚生成好的街区图盖掉一大块 —— 而"刚生成完想看看
+     * 街区长什么样"恰恰是玩家最想看地图的时刻。关着只留一个小药丸，点一下才展开；
+     * 事件发生时另有地图气泡 / 提示条 / 角色口述三条通道通知，不靠"面板必须敞着"提醒。
+     */
     defaultOpen?: boolean
   }>(),
   {
@@ -155,7 +197,7 @@ const props = withDefaults(
     supported: true,
     running: false,
     error: '',
-    defaultOpen: true,
+    defaultOpen: false,
   },
 )
 
@@ -198,6 +240,25 @@ const stateText = computed(() => {
     return t('worldsim.events.state.throttled', { n: props.nextOkInSecs })
   }
   return t(`worldsim.events.state.${r}`)
+})
+
+/* ── P5-5：性能档位（模块级单例，页面与本面板读的是同一份）──────────────── */
+const perf = useWsPerf()
+const TIER_OPTIONS: PerfTierPref[] = ['auto', 'high', 'low']
+const tierPref = computed(() => perf.prefs.value.tier)
+const fpsOn = computed(() => perf.prefs.value.fps)
+const fps = perf.fps
+const tierLabel = computed(() => (perf.low.value ? t('worldsim.perf.tierLow') : t('worldsim.perf.tierHigh')))
+
+/** 「凭什么这么判」——如实列出来（自动档列设备信号，手动档说是你指定的） */
+const whyText = computed(() => {
+  if (perf.prefs.value.tier !== 'auto') return t('worldsim.perf.whyManual')
+  const env = readPerfEnv()
+  const parts: string[] = []
+  if (env.cores) parts.push(t('worldsim.perf.envCores', { n: env.cores }))
+  if (env.memGB) parts.push(t('worldsim.perf.envMem', { n: env.memGB }))
+  if (perf.fps.value > 0) parts.push(t('worldsim.perf.envFps', { n: perf.fps.value }))
+  return parts.length ? `${t('worldsim.perf.whyAuto')} · ${parts.join(' · ')}` : t('worldsim.perf.envNone')
 })
 </script>
 
@@ -249,6 +310,24 @@ const stateText = computed(() => {
   height: 0.5em;
   border-radius: 50%;
   background: var(--ws-ok);
+}
+/* P5-5：fps 读数（只在手动开启时渲染）。等宽数字，读数跳动时宽度不抖。 */
+.ws-ef__fps {
+  flex: none;
+  padding: 0 0.35em;
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ws-fg-dim);
+  border: 1px solid var(--ws-border);
+  border-radius: 999px;
+}
+.ws-ef__perf {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  flex-wrap: wrap;
+  padding-top: 0.15em;
+  border-top: 1px solid var(--ws-border);
 }
 .ws-ef__body {
   display: flex;

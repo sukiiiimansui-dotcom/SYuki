@@ -49,14 +49,20 @@ function writeLS(key: string, val: string) {
  *   · `ws-dark` / `ws-light`        —— 深色开关。注意：**跟随系统**时用的是
  *     `ws-sys-dark`（也由这里打上），这样「系统深色」和「用户显式选深色」在 CSS 里
  *     是同一个规则的两段选择器，不用把深色变量抄两遍
- *   · `ws-perf-low`                 —— 低端机降级：关毛玻璃/关阴影/动画变轻
+ *   · `ws-perf-low`                 —— 低端机降级：关毛玻璃/关阴影/关装饰性动画
+ *
+ * @param opts.lowPerf P5-5：外部（`wsPerf`）算好的性能档位。传进来时以它为准，
+ *   本函数内部的 `detectLowPerf()` 只当兜底 —— **单一事实来源**：
+ *   `.ws-perf-low` 这个类与 JS 侧的气泡上限 / zoom 量化 / 错开精度必须来自同一个判定，
+ *   否则会出现「CSS 说降级了、JS 还在满速跑」的分裂。
  */
-export function useWorldSimTheme() {
+export function useWorldSimTheme(opts: { lowPerf?: Ref<boolean> } = {}) {
   const theme = ref<WorldSimTheme>((readLS(K_THEME) as WorldSimTheme) === 'glass' ? 'glass' : 'mint')
   // 深色偏好：'' = 跟随系统；'dark' / 'light' = 用户显式指定
   const darkPref = ref<string>(readLS(K_DARK))
   const sysDark = ref(systemPrefersDark())
-  const lowPerf = ref(detectLowPerf())
+  const ownLow = ref(detectLowPerf())
+  const lowPerf = opts.lowPerf || ownLow
 
   // 跟随系统时要能实时响应系统切换（用户在通知栏切深色模式，页面不该等刷新）
   let mq: MediaQueryList | null = null

@@ -39,7 +39,7 @@
   --ws-panel-2: rgba(255, 255, 255, 0.62);
   --ws-border: rgba(143, 214, 192, 0.38);
   --ws-fg: #4a5b63;            /* 暖灰文字 */
-  --ws-fg-dim: #7d8f96;
+  --ws-fg-dim: #67757b;   /* WCAG AA：原 #7d8f96 对奶油白只有 3.25，正文级次要文字要 ≥4.5 */
   --ws-primary: #8fd6c0;       /* 薄荷绿 */
   --ws-primary-deep: #62b79d;
   --ws-primary-soft: rgba(143, 214, 192, 0.18);
@@ -58,6 +58,7 @@
   --ws-warn: #e8b86d;
   --ws-err: #e08d8d;
   --ws-stage-bg: #eef4f1;
+  --ws-primary-ink: #649686;  /* 主色当**文字/图标**时用（原主色对底色只有 1.6~2.1，完全读不出）；当面积填充仍用 --ws-primary */
 }
 
 /* ── 主题二：现代简约·毛玻璃 ─────────────────────────────────────────────── */
@@ -68,7 +69,7 @@
   --ws-panel-2: rgba(255, 255, 255, 0.42);
   --ws-border: rgba(154, 166, 232, 0.32);
   --ws-fg: #3c4560;
-  --ws-fg-dim: #6f7896;
+  --ws-fg-dim: #656d88;   /* WCAG AA：原 #6f7896 只有 3.87 */
   --ws-primary: #9aa6e8;       /* 低饱和蓝紫 */
   --ws-primary-deep: #7b88d8;
   --ws-primary-soft: rgba(154, 166, 232, 0.20);
@@ -87,6 +88,7 @@
   --ws-warn: #e6bb78;
   --ws-err: #e393a0;
   --ws-stage-bg: #e9edf7;
+  --ws-primary-ink: #7a83b7;  /* 主色当**文字/图标**时用（原主色对底色只有 1.6~2.1，完全读不出）；当面积填充仍用 --ws-primary */
 }
 
 /* ── 深色（两套主题各出一版，同一色系压低明度）───────────────────────────── */
@@ -100,6 +102,7 @@
   --ws-fg: #d9ebe6;
   --ws-fg-dim: #8ba7a3;
   --ws-primary: #7fd0b8;       /* 亮薄荷点缀 */
+  --ws-primary-ink: #7fd0b8;  /* 深色下主色本来就够亮（对深底 9.8/8.6），ink 就用它本身 */
   --ws-primary-deep: #4fae94;
   --ws-primary-soft: rgba(127, 208, 184, 0.16);
   --ws-on-primary: #0c1a18;
@@ -125,6 +128,7 @@
   --ws-fg: #dfe3f5;
   --ws-fg-dim: #98a0c0;
   --ws-primary: #a7b1f0;
+  --ws-primary-ink: #9aa6e8;  /* 深色下主色本来就够亮（对深底 9.8/8.6），ink 就用它本身 */
   --ws-primary-deep: #7f8ce0;
   --ws-primary-soft: rgba(167, 177, 240, 0.18);
   --ws-on-primary: #171a2e;
@@ -175,14 +179,36 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* 低端机 / 性能档位低：关毛玻璃与阴影，动画变轻（.ws-perf-low 由 JS 打上） */
+/* 低端机 / 性能档位低（P5-5：`ws-perf-low` 由 wsPerf 判定后打上）
+ * ① 关毛玻璃、关阴影 —— 每一帧都要重新合成 backdrop-filter 的东西，低端机上就是掉帧元凶；
+ * ② 装饰性**无限**动画全部关掉（它们会一直占着合成器，哪怕没人看）。 */
 .ws-root.ws-perf-low {
   --ws-blur: 0px;
   --ws-shadow: none;
   --ws-shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
-.ws-root.ws-perf-low .ws-anim {
-  animation-duration: 0.9s;
+/* 无限循环的装饰动画：转圈经线 / 雷达 / 等高线 / 画笔 / 流光 / 骨架高光 / 省略号。
+ * 关掉它们**只影响观感**：`.ws-note` 的色调、主题变量、毛玻璃退化后的底色一个都不动。 */
+.ws-root.ws-perf-low .ws-anim-spin,
+.ws-root.ws-perf-low .ws-anim-spin-rev,
+.ws-root.ws-perf-low .ws-anim-radar,
+.ws-root.ws-perf-low .ws-anim-ring,
+.ws-root.ws-perf-low .ws-anim-draw,
+.ws-root.ws-perf-low .ws-anim-float,
+.ws-root.ws-perf-low .ws-skeleton::after,
+.ws-root.ws-perf-low .ws-dots::after,
+.ws-root.ws-perf-low .ws-trip,
+.ws-root.ws-perf-low .ws-trip__fast.is-on {
+  animation: none;
+}
+/* 唯一保留的一条：纯 opacity 呼吸（“还在加载/还在跑”的功能反馈不能没有，
+   opacity 只走合成，在低端机上可忽略）。 */
+.ws-root.ws-perf-low .ws-anim-breathe {
+  animation: ws-breathe 2.6s ease-in-out infinite;
+}
+/* 低端机上把「悬停时过渡 filter / box-shadow」也停掉：那是交互瞬间一次全屏重画 */
+.ws-root.ws-perf-low .ws-geo .geo-region {
+  transition: fill 0.18s ease;
 }
 
 /* 老 WebView 不支持 backdrop-filter：毛玻璃退化成纯色卡片，可读性优先 */
@@ -313,10 +339,14 @@
 .ws-loading--enter {
   animation: ws-fade-up 0.42s ease both;
 }
-/* 文案末尾的小省略号呼吸 */
+/* 文本末尾的小省略号呼吸。
+ * P5-5 修：原来是 `@keyframes ws-dots` 在动 `content`（每 350ms 换一次文本）——
+ * content 一变就得重新排版那一行字，属于**触发布局**的动画。现在改成
+ * 静态省略号 + opacity 呼吸：一个字符、只动透明度，观感一致（“它在动=还在等”）。 */
 .ws-dots::after {
-  content: '';
-  animation: ws-dots 1.4s steps(4, end) infinite;
+  content: '…';
+  opacity: 0.35;
+  animation: ws-breathe 1.4s ease-in-out infinite;
 }
 
 /* ── 关键帧：全部 ws- 前缀，避免和 LingChat 原本的动画撞名 ── */
@@ -329,10 +359,9 @@
   to   { opacity: 1; }
 }
 @keyframes ws-dots {
-  0%   { content: ''; }
-  25%  { content: '.'; }
-  50%  { content: '..'; }
-  75%  { content: '...'; }
+  /* P5-5：保留这个关键帧名字只为兼容（老版本用它动 `content`），
+     现在没有任何规则引用它 —— 新代码一律用 transform/opacity 那批。 */
+  0%, 100% { opacity: 1; }
 }
 /* 初始化：外圈缓慢旋转 + 内圈反向，像在展开一张地图 */
 @keyframes ws-spin {
@@ -359,10 +388,12 @@
   60%  { stroke-dashoffset: 0; }
   100% { stroke-dashoffset: 0; opacity: 0.35; }
 }
-/* 进度条流光 */
+/* 进度条流光。
+ * P5-5 修：原来是动 `background-position`（每次都要重画那一块渐变）。
+ * 现在改成让 `::after` 那层高光**平移**（transform），合成层完成，不重画。 */
 @keyframes ws-shimmer {
-  0%   { background-position: -120% 0; }
-  100% { background-position: 220% 0; }
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 /* 新画的建筑「弹」出来（AI 增量绘制用） */
 @keyframes ws-pop {
@@ -392,16 +423,21 @@
   animation: ws-draw 2.6s ease-in-out infinite;
 }
 
+/* 骨架条：底色 + 一层会平移的高光。
+ * P5-5：高光走 `::after` + translateX（原来动的是 background-position，属于「每帧重画」）。 */
 .ws-skeleton {
+  position: relative;
+  overflow: hidden;
   height: 0.7em;
   border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    var(--ws-primary-soft) 0%,
-    var(--ws-panel-2) 45%,
-    var(--ws-primary-soft) 90%
-  );
-  background-size: 220% 100%;
+  background: var(--ws-primary-soft);
+}
+.ws-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, var(--ws-panel-2) 50%, transparent 100%);
+  transform: translateX(-100%);
   animation: ws-shimmer 1.6s linear infinite;
 }
 
@@ -410,7 +446,15 @@
  *
  * 注意：这张图是 v-html 注进来的**真 DOM**（不是 <img>），因为要能点、要高亮。
  * 注入前会剥掉 SVG 自带的 <style>（否则那些全局类名会漏到整个应用），
- * 所以下面用 :deep() 把该有的样式补回来 —— 只作用于本页的 .ws-geo。
+ * 所以下面直接把该有的样式补回来 —— 全部用 `.ws-geo xxx` 限定作用域。
+ *
+ * ⚠️ 本文件是**全局 CSS**（由 WorldSim.vue `import` 引入），**不能用 `:deep()`**：
+ *    `:deep()` 是 Vue SFC `<style scoped>` 的**编译期**语法，在普通 .css 里它就是一个
+ *    非法选择器 —— 浏览器**静默丢弃整条规则**，类型检查与构建都不会报错。
+ *    这一条踩过一次，后果极隐蔽：13 条规则（尺寸约束 width/height:100%、cursor、
+ *    配色、hover、选中高亮 `.ws-on`、按 `data-zoom` 分层隐藏…）全部失效，
+ *    表现是「SVG 按固有尺寸 900×620 画出来、在 407 宽的容器里只看得见西北一角」。
+ *    改动这里之前先确认：`grep -c ':deep(' src/assets/styles/worldsim.css` 必须是 0。
  * ========================================================================== */
 .ws-geo {
   position: relative;
@@ -418,7 +462,26 @@
   height: 100%;
   /* 缩放/平移后超出舞台的部分裁掉（transform 的溢出不会被父级自动裁） */
   overflow: hidden;
+  /* 海色兜底（高德那套）；具体见下面三个 ws-sea-* */
+  background: var(--ws-sea, #cfe3f5);
 }
+
+/* ── 舞台底色 = 当前**地图风格**的海色 ────────────────────────────────────────
+ * 先说清楚一件实测过的事（免得后来人误判）：**地图 SVG 是铺满舞台的**
+ * （`.ws-geo svg { width:100%; height:100% }`，SVG 自带的海色矩形填满整个 viewBox）。
+ * 所以中国地图上下那两片蓝**不是"留白"、也不是接缝**，就是它自己的海域 —— 实测像素
+ * 上下与 SVG 内海色同为 #cfe3f5。（曾经误判成"舞台底色与海色不一致导致接缝"，
+ * 量了才排除：改这里的颜色，截图逐像素不变。）
+ *
+ * 那这三条规则是干什么的：SVG **还没加载出来**（首屏取图中 / 取图失败 / 切换层级的
+ * 淡入过程中）时，舞台底色是可见的。此时若它还是薄荷奶油色，就会先闪一下浅绿、
+ * 再跳成海蓝 —— 换成"当前风格的海色"可以让这一下过渡无缝。
+ *
+ * ⚠️ 三个色值必须与后端 `src-tauri/src/world_map/render_geo.rs::style_of()` 的 `bg`
+ *    逐字一致：gaode #cfe3f5 / dark #0a1420 / water #dfeaf2。改后端配色时这里要一起改。 */
+.ws-geo.ws-sea-gaode { --ws-sea: #cfe3f5; }
+.ws-geo.ws-sea-dark { --ws-sea: #0a1420; }
+.ws-geo.ws-sea-water { --ws-sea: #dfeaf2; }
 /* ── 手势的**变换容器**（A 部分：地图手势本体，PR 里应该有）─────────────
  * 为什么要有这么一层：平移/缩放只改这个 div 的 transform，
  * **绝不碰后端 SVG 本体** —— 那个 SVG 是 v-html 注进来的文本，
@@ -472,55 +535,55 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
-.ws-geo :deep(svg) {
+.ws-geo svg {
   width: 100%;
   height: 100%;
   display: block;
   /* 换级时整张图淡入：区域切换的“呼吸感” */
   animation: ws-fade-in 0.34s ease both;
 }
-.ws-geo :deep(.geo-region) {
+.ws-geo .geo-region {
   cursor: pointer;
 }
-.ws-geo :deep(.geo-fill) {
+.ws-geo .geo-fill {
   transition: fill 0.18s ease, filter 0.18s ease;
 }
-.ws-geo :deep(.geo-region:hover .geo-fill) {
+.ws-geo .geo-region:hover .geo-fill {
   filter: brightness(1.06) saturate(1.12);
 }
 /* 命中（定位到的）区划：高亮 + 呼吸描边。用类名切换，不用改 SVG 文本 */
-.ws-geo :deep(.geo-region.ws-on .geo-fill) {
+.ws-geo .geo-region.ws-on .geo-fill {
   fill: var(--ws-hl);
   fill-opacity: 0.92;
   stroke: var(--ws-hl-line);
   stroke-width: 2.4;
 }
-.ws-geo :deep(.geo-region.ws-on .geo-border) {
+.ws-geo .geo-region.ws-on .geo-border {
   stroke: var(--ws-hl-line);
   stroke-width: 2;
 }
-.ws-geo :deep(.geo-region.ws-on) {
+.ws-geo .geo-region.ws-on {
   animation: ws-breathe 2.4s ease-in-out infinite;
 }
 /* 按 zoom 分层显示：这两条是**从 SVG 自带 CSS 里搬出来的**（注入前我们把那段
  * <style> 剥掉了，否则它会漏成全局样式）。原规则是 `svg[data-zoom="1"] .z2{display:none}`：
  *   z1 远景（底色/边界/地名）、z2 中景（内阴影）、z3 近景 —— zoom 越小留的层越少。
  * 搬过来之后作用域是「本页的 .ws-geo」，既保留分层，又不会污染别处。 */
-.ws-geo :deep(svg[data-zoom="1"] .z2),
-.ws-geo :deep(svg[data-zoom="1"] .z3) {
+.ws-geo svg[data-zoom="1"] .z2,
+.ws-geo svg[data-zoom="1"] .z3 {
   display: none;
 }
-.ws-geo :deep(svg[data-zoom="2"] .z3) {
+.ws-geo svg[data-zoom="2"] .z3 {
   display: none;
 }
 
 /* 选中的（用户点的）那一个：实心主色，跟“命中”区分开 */
-.ws-geo :deep(.geo-region.ws-pick .geo-fill) {
+.ws-geo .geo-region.ws-pick .geo-fill {
   fill: var(--ws-primary);
   stroke: var(--ws-hl-line);
   stroke-width: 2.6;
 }
-.ws-root.ws-perf-low .ws-geo :deep(.geo-region.ws-on) {
+.ws-root.ws-perf-low .ws-geo .geo-region.ws-on {
   animation: none;
   opacity: 1;
 }
@@ -611,9 +674,15 @@
 .ws-prog__bar i {
   display: block;
   height: 100%;
+  width: 100%;
   background: var(--ws-primary);
   border-radius: 999px;
-  transition: width 0.3s ease;
+  /* P5-5：只动 transform（scaleX），**不动 width** ——
+     width 是布局属性，流式绘制时每帧改一次会让整条卡片反复重排。
+     进度值由 JS 写成 `--ws-prog`（0~1），见 WsDistrict 的进度卡。 */
+  transform: scaleX(var(--ws-prog, 0));
+  transform-origin: 0 50%;
+  transition: transform 0.3s ease;
 }
 
 .ws-note {

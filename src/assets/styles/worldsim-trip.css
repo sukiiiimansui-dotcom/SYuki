@@ -398,13 +398,19 @@
     transform: translateY(0);
   }
 }
+/* 加速中的呼吸。
+ * P5-5 修：原来是动 `box-shadow`（每帧重画那圈扩散的阴影，低端机上很贵）。
+ * 现在只动 transform + opacity：元素**微微放大**、整体淡一点 ——
+ * 观感还是「它在闪」，但走合成层，不重画。 */
 @keyframes ws-trip-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 2px var(--ws-primary-soft, rgba(143, 214, 192, 0.18));
+    transform: scale(1);
+    opacity: 1;
   }
   50% {
-    box-shadow: 0 0 0 4px var(--ws-primary-soft, rgba(143, 214, 192, 0.3));
+    transform: scale(1.06);
+    opacity: 0.86;
   }
 }
 @media (prefers-reduced-motion: reduce) {

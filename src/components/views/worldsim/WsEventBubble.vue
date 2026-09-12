@@ -22,10 +22,10 @@
   -->
   <div ref="host" class="ws-ebx" data-no-gesture>
     <div
-      v-for="b in bubbles"
+      v-for="b in shown"
       :key="b.key"
       class="ws-eb"
-      :class="{ 'is-center': !findActor(b.role) }"
+      :class="{ 'is-center': !findActor(b.role), 'is-lite': low }"
       :style="styleOf(b)"
       @pointerdown.stop
       @pointerup.stop
@@ -41,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { bubbleAnchorOf, type WsBubbleItem } from '@/composables/useWorldEvents'
 import type { PlacedActor } from './wsActors'
 
@@ -57,9 +57,25 @@ const props = withDefaults(
     zoom?: number
     /** 没有对应角色时，气泡上写的名字（玩家的称呼） */
     meName?: string
+    /**
+     * P5-5：**同时显示的气泡数上限**。
+     * 数据层（`useWorldEvents`）自己有一层上限（`WS_BUBBLE_MAX = 4`），
+     * 这里再收一道是给低端机用的：DOM 节点、`backdrop-filter`、
+     * 每个气泡一次位置换算 —— 一次冒 4 个在低端机上就是一次小卡顿。
+     * 多出来的气泡不是丢了，只是这一帧不画（到点仍会自己消失）。
+     */
+    max?: number
+    /** P5-5：低性能档 —— 入场动画退化成纯淡入（不做位移+缩放） */
+    low?: boolean
   }>(),
-  { grid: 28, zoom: 1, meName: '' },
+  { grid: 28, zoom: 1, meName: '', max: 4, low: false },
 )
+
+/** 只画前 `max` 条（顺序就是数据层的顺序，最新那条一定在） */
+const shown = computed<WsBubbleItem[]>(() => {
+  const cap = Math.max(1, Math.trunc(Number(props.max) || 1))
+  return props.bubbles.length > cap ? props.bubbles.slice(0, cap) : props.bubbles
+})
 
 /* ── 盒子尺寸：自己量（offsetWidth 不受祖先 transform 影响）──────────────── */
 const host = ref<HTMLElement | null>(null)
@@ -155,6 +171,10 @@ function styleOf(b: WsBubbleItem): Record<string, string> {
   pointer-events: auto;
   animation: ws-pop 0.22s ease both;
   overflow-wrap: anywhere;
+}
+/* P5-5 低档：入场只淡入（位移+缩放那套在低端机上每次都要重新合成一层） */
+.ws-eb.is-lite {
+  animation: ws-fade-in 0.14s ease both;
 }
 .ws-eb__ico {
   flex: none;

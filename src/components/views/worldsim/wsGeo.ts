@@ -146,7 +146,13 @@ export function hash32(s: string): number {
 export function buildAreaLabel(path: GeoRegion[], startAt = 1): string {
   const names = (path || [])
     .slice(startAt)
-    .map((p) => (p && p.name ? String(p.name).trim() : ''))
+    // ⚠️ **纯 6 位数字的名字是 adcode，不是地名**：有些层级（例如直辖市那一跳）
+    // 后端只给了编码没给名字，直接拼出来就是「重庆市·500100·500102」——
+    // 把一串编码甩给用户既没用又吓人。宁可少一段，也不露编码。
+    .map((p) => {
+      const raw = p && p.name ? String(p.name).trim() : ''
+      return /^\d{6}$/.test(raw) ? '' : raw
+    })
     .filter(Boolean)
   return names.join('·')
 }

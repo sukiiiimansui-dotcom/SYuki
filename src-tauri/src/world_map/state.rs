@@ -65,6 +65,7 @@ use tauri::State;
 use tokio::sync::RwLock;
 
 use super::summary::{self, SummaryInput, WEATHER_TTL_SECS};
+use super::bookmark;
 
 /// `Value::Null` 的常量引用（给 `Option<Value>` 缺席时当占位用，零成本）
 const NULL: Value = Value::Null;
@@ -225,9 +226,21 @@ impl MapRuntime {
     /// **同步函数**：注入点握着 `game_status` 锁，这里一旦 `await` 就可能被
     /// 排到别的任务后面（甚至和写锁互等）。所有输入都来自本结构体 + 调用方传进来的
     /// `now`，没有任何 IO。
+    ///
+    /// P5-3：拼完顺带**消费**掉这次真正写进注入的那几行待写记忆
+    /// （见 [`MapRuntime::render_picked`]）—— 消费是纯内存操作，不碰记忆库、
+    /// 不调 LLM、不 await 网络（那三件事在 `game_status` 锁内是绝对禁止的）。
     pub fn injection_text(&mut self, role: &str, now: &DateTime<Local>) -> String {
         let secs = now.timestamp().max(0) as u64;
-        let text = self.render(role, now, secs);
+        let (text, consume) = self.render_picked(role, now, secs);
+
+        // 这些行已经进了这次注入：留在队列里下一轮就会**重复注入**，
+        // 所以注入完立刻清掉。倒序删，免得前面的下标错位。
+        for i in consume.iter().rev() {
+            if *i < self.pending_memory.len() {
+                self.pending_memory.remove(*i);
+            }
+        }
 
         // 空文本不缓存也不注入（世界模拟没开时每一条台词都会走到这里）
         if text.is_empty() {
@@ -257,7 +270,11 @@ impl MapRuntime {
         text
     }
 
-    /// 只读预览（不写缓存）：给 `world_map_runtime` 返回「AI 现在能看到什么」。
+    /// 只读预览（不写缓存、**不消费待写记忆**）：给 `world_map_runtime` 返回
+    /// 「AI 现在能看到什么」。
+    ///
+    /// 预览里会带上当前还躺在队列里的「记忆：…」那一块 —— 那正是**下一次注入**
+    /// 会写进去的内容；真正的消费只发生在 [`MapRuntime::injection_text`]。
     pub fn preview(&self, role: &str) -> String {
         let now = Local::now();
         let secs = now.timestamp().max(0) as u64;
@@ -266,7 +283,20 @@ impl MapRuntime {
 
     /// 真正的拼装：把借用凑齐交给 [`summary::render`]（纯函数，可单测）。
     fn render(&self, role: &str, now: &DateTime<Local>, secs: u64) -> String {
-        summary::render(&SummaryInput {
+        self.render_picked(role, now, secs).0
+    }
+
+    /// 拼装 + 挑出这次该消费的待写记忆，返回 `(注入文本, 要清掉的队列下标)`。
+    ///
+    /// 拆成"返回下标"而不是"自己直接删"：`preview` 与 `injection_text` 走的是
+    /// 同一段拼装，但**只有注入那条路**能消费（预览是只读的，看一眼不该让角色
+    /// 记住什么）。删除动作留在调用方，语义一眼可见。
+    ///
+    /// 两条闸门：
+    ///   · 没场景（`summary::render` 返回空串）→ 一行都不消费，等世界模拟重新打开；
+    ///   · 只取**这个角色的**行（与 `take_memory` 同一套宽容度：去空白 + 忽略 ASCII 大小写）。
+    fn render_picked(&self, role: &str, now: &DateTime<Local>, secs: u64) -> (String, Vec<usize>) {
+        let mut out = summary::render(&SummaryInput {
             scene: self.scene.as_ref().unwrap_or(&NULL),
             me: self.me.as_ref().unwrap_or(&NULL),
             actors: &self.actors,
@@ -278,7 +308,32 @@ impl MapRuntime {
             hhmm: &now.format("%H:%M").to_string(),
             // `Timelike::hour()` 保证 0..=23，直接给 u32
             hour: now.hour(),
-        })
+        });
+        if out.is_empty() {
+            return (out, Vec::new());
+        }
+
+        // 属于这个角色的行（在 pending_memory 里的下标 + 行文本）
+        let mine: Vec<(usize, &str)> = self
+            .pending_memory
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| memory_role_matches(&m.role, role))
+            .map(|(i, m)| (i, m.line.as_str()))
+            .collect();
+        if mine.is_empty() {
+            return (out, Vec::new());
+        }
+
+        let lines: Vec<&str> = mine.iter().map(|(_, l)| *l).collect();
+        let recent = summary::last_event(&self.events);
+        let (block, picked) = summary::memory_block(&lines, recent.as_deref(), summary::MEMORY_LINES_MAX);
+        out.push_str(&block);
+        let consume = picked
+            .iter()
+            .filter_map(|&p| mine.get(p).map(|(i, _)| *i))
+            .collect();
+        (out, consume)
     }
 
     /// **字段级合并**一个 patch，返回真的改动了的字段名列表。
@@ -448,14 +503,15 @@ impl MapRuntime {
     /// 不会重复）。`role` 为 `None`（或空串）时取走全部。
     ///
     /// 角色名匹配与 `summary::actor_record` 同一套宽容度：去首尾空白 + 忽略
-    /// ASCII 大小写（前端传的名字多一个空格不该让记忆留在队列里烂掉）。
+    /// ASCII 大小写（前端传的名字多一个空格不该让记忆留在队列里烂掉），
+    /// 与注入侧的消费判据共用 [`memory_role_matches`]。
     pub fn take_memory(&mut self, role: Option<&str>) -> Vec<PendingMemory> {
         let want = role.map(str::trim).filter(|s| !s.is_empty());
         let mut taken = Vec::new();
         let mut keep = Vec::new();
         for item in std::mem::take(&mut self.pending_memory) {
             match want {
-                Some(w) if !item.role.trim().eq_ignore_ascii_case(w) => keep.push(item),
+                Some(w) if !memory_role_matches(&item.role, w) => keep.push(item),
                 _ => taken.push(item),
             }
         }
@@ -677,6 +733,61 @@ fn str_of_opt(v: Option<&Value>) -> Option<&str> {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  P3-1：地图存档（跟着对话存档走）
+// ═══════════════════════════════════════════════════════════════════
+
+/// 导出当前这张地图的书签（**同步、只读、不加锁等待**），给存档快照用。
+///
+/// 调用点：`GameStatus::to_snapshot()`（保存/自动保存都在那一条路上）。
+/// 拿不到读锁（前端正好在推 patch）就返回 `None` —— 保存不该因为地图卡住；
+/// 这一次没存上，下一次自动保存还会再取。
+///
+/// 没开世界模拟（没有 `scene`）→ `None`，存档里不会出现 `world_map` 键的"空地图"。
+pub fn bookmark_snapshot() -> Option<bookmark::WorldMapBookmark> {
+    let guard = RUNTIME.try_read().ok()?;
+    let now = MapRuntime::now_secs();
+    let mut snapshot = guard.to_json(now);
+    snapshot["updated_at"] = json!(guard.updated_at);
+    bookmark::WorldMapBookmark::from_runtime(&snapshot)
+}
+
+/// 读档时把地图书签推回运行时（**同步、尽力而为**）。
+///
+/// · `None`（老存档 / 没开过世界模拟）→ **什么都不做**：不"顺手清空"当前地图
+///   （读档发生在切换存档时，清不清空由前端决定，后端不猜）。
+/// · `Some(书签)` → 走与 `world_map_update_runtime` 完全相同的 `apply_patch`，
+///   只写 `scene` 那一块（字段级合并），不碰玩家位置 / 角色位置 / 事件 / 天气。
+/// · 拿不到写锁（前端正在推状态）就交给后台任务补写，**不丢**（与 `install_facilities` 同款）。
+pub fn restore_bookmark(bm: Option<&bookmark::WorldMapBookmark>) {
+    let Some(bm) = bm else { return };
+    let patch = bm.restore_patch();
+    if patch.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        return;
+    }
+    match RUNTIME.try_write() {
+        Ok(mut guard) => {
+            guard.apply_patch(&patch);
+        }
+        Err(_) => {
+            tauri::async_runtime::spawn(async move {
+                let mut guard = RUNTIME.write().await;
+                guard.apply_patch(&patch);
+            });
+        }
+    }
+}
+
+/// 待写记忆的归属匹配：去首尾空白 + 忽略 ASCII 大小写，`role` 为空视为"不匹配任何人"。
+///
+/// `take_memory`（前端 drain）与 `render_picked`（注入消费）必须用**同一把尺子**：
+/// 两边判得不一样时，会出现"注入说这条不是他的、drain 说这条就是他的"这种
+/// 谁也说不清的丢行/重复行。
+fn memory_role_matches(item_role: &str, role: &str) -> bool {
+    let want = role.trim();
+    !want.is_empty() && item_role.trim().eq_ignore_ascii_case(want)
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  Tauri 命令
 // ═══════════════════════════════════════════════════════════════════
 /// `world_map_update_runtime` —— 前端把当前场景/玩家位置/角色位置推上来。
@@ -825,5 +936,218 @@ mod tests {
         assert!(rt.apply_patch(&json!([1, 2, 3])).is_empty());
         assert!(rt.apply_patch(&json!("x")).is_empty());
         assert!(rt.updated_at == 0);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  P5-3：待写记忆真正进到注入里（块文本 + 消费 + 去重 + 上限）
+    // ══════════════════════════════════════════════════════════════
+
+    /// 开了世界模拟的 runtime（场景 + 一个角色）。
+    fn runtime_with_scene() -> MapRuntime {
+        let mut rt = MapRuntime::new();
+        rt.apply_patch(&json!({
+            "scene": {"area": "广州市·越秀区·东山口"},
+            "actors": {"小满": {"facility": "便利店", "x": 3.0, "y": 4.0}},
+            "current_role": "小满",
+        }));
+        rt
+    }
+
+    /// **零字节**：没有待写记忆时，注入文本与改前**逐字相同**（P5-2 的基线格式）。
+    #[test]
+    fn injection_text_is_byte_identical_when_there_is_nothing_pending() {
+        let mut rt = runtime_with_scene();
+        let now = Local::now();
+        let secs = now.timestamp().max(0) as u64;
+        let text = rt.render("小满", &now, secs);
+        assert_eq!(
+            text,
+            format!(
+                "【当前场景】\n你在：广州市·越秀区·东山口·便利店里\n时间/天气：{}（{}）",
+                now.format("%H:%M"),
+                summary::zh_period(now.hour())
+            )
+        );
+        assert!(!text.contains("记忆"), "没有待写记忆时不许出现记忆块: {text:?}");
+        // 注入一次（会走完整的 render_picked + 消费）之后仍然逐字相同
+        let injected = rt.injection_text("小满", &now);
+        assert_eq!(injected, text, "空队列时注入文本必须与改前逐字一致");
+    }
+
+    /// 有待写记忆 → 注入里多出「记忆：…」，写进去的那几行**立刻从队列里消费掉**。
+    #[test]
+    fn injection_writes_pending_memory_and_consumes_it() {
+        let mut rt = runtime_with_scene();
+        assert!(rt.push_memory("小满", "旁白: 在便利店买了伞", 1));
+        assert!(rt.push_memory("小满", "旁白: 遇到阿离", 2));
+
+        let text = rt.injection_text("小满", &Local::now());
+        assert!(text.contains("记忆：旁白: 在便利店买了伞；旁白: 遇到阿离"), "{text}");
+        assert!(text.starts_with("【当前场景】"), "记忆块只能追加在末尾: {text}");
+        assert_eq!(rt.pending_memory_len(), 0, "注入过的行必须消费掉，否则下一轮重复");
+
+        // 第二轮：那两行不会再说一遍
+        let again = rt.injection_text("小满", &Local::now());
+        assert!(!again.contains("记忆："), "上一轮已注入的行不该重复出现: {again}");
+    }
+
+    /// 别人的记忆一行都不许进我的注入，也不许被我消费。
+    #[test]
+    fn injection_only_touches_the_speaking_role() {
+        let mut rt = runtime_with_scene();
+        rt.push_memory("小满", "旁白: 我买了伞", 1);
+        rt.push_memory("阿离", "旁白: 阿离在公园", 2);
+
+        let mine = rt.injection_text("小满", &Local::now());
+        assert!(mine.contains("旁白: 我买了伞"));
+        assert!(!mine.contains("阿离在公园"), "别人的经历不该进我的注入: {mine}");
+        assert_eq!(rt.pending_memory_len(), 1, "别人的行必须留在队列里");
+        assert_eq!(rt.take_memory(Some("阿离")).len(), 1);
+        // 角色名带空格 / 大小写不同也算同一个人（与 take_memory 同一把尺子）
+        rt.push_memory(" Alice ", "旁白: 我是 Alice", 3);
+        assert!(rt.injection_text("alice", &Local::now()).contains("我是 Alice"));
+        assert_eq!(rt.pending_memory_len(), 0);
+    }
+
+    /// 「最近：…」那行与待写记忆是同一件事时**只说一次**（去重），
+    /// 而且被去重的那一行也算"已经写进去了"（要消费掉，不能留着重说）。
+    #[test]
+    fn injection_dedupes_against_the_recent_event_line() {
+        let mut rt = runtime_with_scene();
+        rt.apply_patch(&json!({"events": [{"text": "在便利店买了伞"}]}));
+        rt.push_memory("小满", "旁白: 在便利店买了伞", 1);
+
+        let text = rt.injection_text("小满", &Local::now());
+        assert!(text.contains("最近：刚才在便利店买了伞"), "{text}");
+        assert!(!text.contains("记忆："), "同一句话不该出现两次: {text}");
+        assert_eq!(text.matches("在便利店买了伞").count(), 1, "{text}");
+        // 去重掉的那行也已经"讲过"了 → 必须消费，否则下一轮「最近」换掉它又冒出来
+        assert_eq!(rt.pending_memory_len(), 0);
+    }
+
+    /// 一次注入最多 5 行；剩下的留在队列里，下一轮接着按发生顺序讲。
+    #[test]
+    fn injection_caps_the_block_and_drains_the_backlog_in_order() {
+        let mut rt = runtime_with_scene();
+        for i in 1..=8 {
+            rt.push_memory("小满", format!("旁白: 第{i}件事"), i as i64);
+        }
+        let first = rt.injection_text("小满", &Local::now());
+        assert!(first.contains("记忆：旁白: 第1件事"), "{first}");
+        assert!(first.contains("第5件事"));
+        assert!(!first.contains("第6件事"), "一次最多 5 行: {first}");
+        assert_eq!(rt.pending_memory_len(), 3, "没进注入的行要留下，不能丢");
+
+        let second = rt.injection_text("小满", &Local::now());
+        assert!(second.contains("记忆：旁白: 第6件事；旁白: 第7件事；旁白: 第8件事"), "{second}");
+        assert!(!second.contains("第1件事"), "老的行不该重讲: {second}");
+        assert_eq!(rt.pending_memory_len(), 0);
+    }
+
+    /// 预览只看不消费（`world_map_runtime` 的 `injection` 预览是只读的）。
+    #[test]
+    fn preview_shows_pending_memory_without_consuming_it() {
+        let mut rt = runtime_with_scene();
+        rt.push_memory("小满", "旁白: 只看看不拿走", 1);
+        let preview = rt.preview("小满");
+        assert!(preview.contains("记忆：旁白: 只看看不拿走"), "{preview}");
+        assert_eq!(rt.pending_memory_len(), 1, "预览绝不能消费待写记忆");
+        // 消费只发生在注入那条路，而且注入的正文与刚预览到的是同一段
+        let injected = rt.injection_text("小满", &Local::now());
+        assert!(injected.contains("记忆：旁白: 只看看不拿走"), "{injected}");
+        assert_eq!(rt.pending_memory_len(), 0);
+        // 消费完之后预览里也不该再有它
+        assert!(!rt.preview("小满").contains("只看看不拿走"));
+    }
+
+    /// 世界模拟关着（没有 scene）时：一个字都不注入，记忆也一行都不消费。
+    #[test]
+    fn without_a_scene_nothing_is_injected_or_consumed() {
+        let mut rt = MapRuntime::new();
+        rt.push_memory("小满", "旁白: 还没开世界模拟", 1);
+        assert!(rt.injection_text("小满", &Local::now()).is_empty());
+        assert_eq!(rt.pending_memory_len(), 1, "没注入就不该消费（等开了再补上）");
+        // 当前角色为空 / 空白时同理：不猜是谁的
+        let mut rt2 = runtime_with_scene();
+        rt2.push_memory("小满", "旁白: 谁的？", 1);
+        assert!(!rt2.injection_text("", &Local::now()).contains("记忆："));
+        assert!(!rt2.injection_text("   ", &Local::now()).contains("记忆："));
+        assert_eq!(rt2.pending_memory_len(), 1);
+    }
+
+    /// 缓存与消费的配合：第二轮内容不变时文本复用（指纹不变），
+    /// 但"上一轮注入过的行"绝不会因为缓存而复现。
+    #[test]
+    fn injection_cache_does_not_resurrect_consumed_memory() {
+        let mut rt = runtime_with_scene();
+        rt.push_memory("小满", "旁白: 一次性的事", 1);
+        let now = Local::now();
+        let first = rt.injection_text("小满", &now);
+        assert!(first.contains("一次性的事"));
+        let fp_first = rt.injection.get("小满").unwrap().fp;
+
+        let second = rt.injection_text("小满", &now);
+        assert!(!second.contains("一次性的事"), "{second}");
+        assert_ne!(rt.injection.get("小满").unwrap().fp, fp_first, "文本变了指纹就该变");
+
+        // 再来新的一行 → 又出现在注入里
+        rt.push_memory("小满", "旁白: 新的事", 2);
+        let third = rt.injection_text("小满", &now);
+        assert!(third.contains("记忆：旁白: 新的事"), "{third}");
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  P3-1：地图存档（书签的导出 / 恢复）
+    // ══════════════════════════════════════════════════════════════
+
+    /// 没开世界模拟 → 存档里不带地图（`None`）。
+    #[test]
+    fn no_scene_means_no_bookmark_in_the_save() {
+        let rt = MapRuntime::new();
+        let now = MapRuntime::now_secs();
+        let mut snapshot = rt.to_json(now);
+        snapshot["updated_at"] = json!(rt.updated_at);
+        assert!(bookmark::WorldMapBookmark::from_runtime(&snapshot).is_none());
+    }
+
+    /// 有场景 → 书签带全 adcode 链路 / 小区名 / 种子，恢复 patch 只动 scene。
+    #[test]
+    fn bookmark_restores_the_scene_without_touching_anything_else() {
+        let mut rt = runtime_with_scene();
+        rt.apply_patch(&json!({
+            "scene": {"adcode": "440104", "place": "东山口", "maplib_key": "layout:abc"},
+            "me": {"area": "广州市·越秀区", "gx": 13.0, "gy": 4.0},
+            "weather": {"desc": "小雨", "temp_c": 22},
+        }));
+        let now = MapRuntime::now_secs();
+        let mut snapshot = rt.to_json(now);
+        snapshot["updated_at"] = json!(rt.updated_at);
+        let bm = bookmark::WorldMapBookmark::from_runtime(&snapshot).expect("有 scene 就该有书签");
+        assert_eq!(bm.area.as_deref(), Some("广州市·越秀区·东山口"));
+        assert_eq!(bm.place.as_deref(), Some("东山口"));
+        assert_eq!(bm.adcodes, vec!["440104".to_string()]);
+        assert_eq!(bm.maplib_key.as_deref(), Some("layout:abc"));
+        assert_eq!(bm.seed, Some(bookmark::area_seed("广州市·越秀区·东山口") as u64));
+
+        // 恢复到一个空 runtime：只恢复 scene
+        let patch = bm.restore_patch();
+        let mut fresh = MapRuntime::new();
+        let changed = fresh.apply_patch(&patch);
+        assert_eq!(changed, vec!["scene".to_string()]);
+        assert_eq!(fresh.scene.as_ref().unwrap()["area"], json!("广州市·越秀区·东山口"));
+        assert_eq!(fresh.scene.as_ref().unwrap()["place"], json!("东山口"));
+        assert_eq!(fresh.scene.as_ref().unwrap()["adcode"], json!("440104"));
+        // 玩家位置 / 天气 / 角色位置不在存档书签的责任范围内
+        assert!(fresh.me.is_none());
+        assert!(fresh.weather.is_none());
+        assert_eq!(fresh.actors, json!({}));
+    }
+
+    /// 老存档（`world_map: None`）读档时**什么都不做** —— 不"顺手清空"当前地图。
+    #[test]
+    fn restoring_an_old_save_leaves_the_current_map_alone() {
+        // 逻辑与 `restore_bookmark(None)` 一致：直接验 patch 侧的前置条件
+        assert!(bookmark::WorldMapBookmark::default().restore_patch().as_object().unwrap().is_empty());
+        assert!(bookmark::WorldMapBookmark::from_scene(&Value::Null).is_none());
     }
 }

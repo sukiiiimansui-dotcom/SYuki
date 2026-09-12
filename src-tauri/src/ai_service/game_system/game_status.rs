@@ -235,6 +235,9 @@ impl GameStatus {
     // ============ 存档状态快照 ============
 
     /// 将当前 GameStatus 中需要持久化的字段导出为可序列化的快照
+    ///
+    /// P3-1：顺带把**当前这张地图**（世界模拟的 scene 书签）也导出去 ——
+    /// 「地图存档跟着对话存档走」。书签是 `Option`：没开世界模拟就是 `None`。
     pub fn to_snapshot(&self) -> GameStatusSnapshot {
         GameStatusSnapshot {
             present_role_ids: self.present_role_ids.iter().copied().collect(),
@@ -247,10 +250,14 @@ impl GameStatus {
             completed_scripts: self.completed_scripts.iter().cloned().collect(),
             last_dialog_time: self.last_dialog_time.map(|dt| dt.to_rfc3339()),
             scene_awareness_enabled: self.scene_awareness_enabled,
+            world_map: crate::world_map::state::bookmark_snapshot(),
         }
     }
 
     /// 从快照恢复场景状态
+    ///
+    /// P3-1：读档时把地图书签推回世界模拟的运行时（场景 / 小区名 / adcode 链路）。
+    /// 地图库本体（图片、布局）本来就在本地缓存里按 key 索引，不用跟着存档复制。
     pub fn apply_snapshot(&mut self, snapshot: &GameStatusSnapshot) {
         self.background = snapshot.background.clone();
         self.background_music = snapshot.background_music.clone();
@@ -267,39 +274,11 @@ impl GameStatus {
         self.present_role_ids = snapshot.present_role_ids.iter().copied().collect();
         self.onstage_role_ids = snapshot.present_role_ids.clone();
         self.scene_awareness_enabled = snapshot.scene_awareness_enabled;
+        crate::world_map::state::restore_bookmark(snapshot.world_map.as_ref());
     }
 }
 
-/// `GameStatus` 中需要持久化到 `save.status` JSON 的字段。
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub struct GameStatusSnapshot {
-    pub present_role_ids: Vec<i32>,
-    pub current_role_id: Option<i32>,
-    #[serde(default)]
-    pub background: String,
-    #[serde(default = "default_background_music")]
-    pub background_music: String,
-    #[serde(default = "default_background_effect")]
-    pub background_effect: String,
-    #[serde(default)]
-    pub current_scene_id: Option<String>,
-    #[serde(default)]
-    pub global_variables: HashMap<String, Value>,
-    #[serde(default)]
-    pub completed_scripts: Vec<String>,
-    pub last_dialog_time: Option<String>,
-    #[serde(default = "default_true")]
-    pub scene_awareness_enabled: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_background_music() -> String {
-    "none".into()
-}
-fn default_background_effect() -> String {
-    "none".into()
-}
+/// 存档快照的字段定义在 `game_snapshot.rs`（拆出去是为了能脱离工程跑兼容性单测：
+/// 老存档没有 `world_map` 键时必须能直接读）。这里 `pub use` 原样再导出，
+/// 所有既有引用路径 `…::game_status::GameStatusSnapshot` 保持不变。
+pub use super::game_snapshot::GameStatusSnapshot;

@@ -39,7 +39,33 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
         ],
     ),
     ("character", &["character_list", "character_switch"]),
-    ("scene", &["scene_list", "scene_switch"]),
+    // P3-4：**世界模拟专属**的三个地图工具并进 scene 组，跟「场景」开关同一个开关。
+    //
+    // 为什么不新建一个 `world_map` 组：设置页的工具组列表是前端**硬编码**的
+    // （`src/api/services/tool-settings.ts` 的组名+i18n），后端新建一个组名，
+    // 用户在那个页面上根本看不到它 → 组永远关着 → 工具还是拿不到。
+    // 并进 scene 组是**零前端改动**就能让用户开得起来的唯一做法。
+    //
+    // 语义上也站得住：这三个工具干的事与 scene_list/scene_switch 是同一类 ——
+    // 让 AI 知道「我现在在哪、周围有什么」（get_my_location / get_nearby_facilities）
+    // 与改变「我处在什么情境」（move_to），都属于情境感知。
+    //
+    // ⚠️ 可达性的完整链路（少一环都拿不到工具，别只盯着这里）：
+    //   设置页打开「场景」→ `ToolSettings::sync_to_permissions` 把这三个名字写进
+    //   **default 角色组**并置 `enabled = true` → `permissions::allowed_tools()`
+    //   场景组（UserChat → scene_admin，all_tools=true）与该角色组取交集才非空。
+    //   默认角色组 `enabled = false` 时 `allowed_tools()` 直接返回空集（官方既有行为），
+    //   所以「用户在设置页开一次场景组」是这三个工具唯一的默认可达路径。
+    (
+        "scene",
+        &[
+            "scene_list",
+            "scene_switch",
+            "get_my_location",
+            "get_nearby_facilities",
+            "move_to",
+        ],
+    ),
     ("status", &["status_get_current", "status_get_scene"]),
     ("clock", &["get_current_time"]),
     ("skills", &["list_skills", "read_skill"]),
@@ -212,5 +238,137 @@ file_ops_allow_any_path = false
 
         let loaded = ToolSettings::load_or_create(dir.path()).unwrap();
         assert!(loaded.command_auto_approve);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  P3-4：世界模拟的三个地图工具必须**默认可达**
+    //
+    //  可达性不是本文件一个 pin 说了算的：设置页开关 → `sync_to_permissions`
+    //  → 权限矩阵「场景组 × 角色组」交集。所以这里跑的是**整条链路**：
+    //  用真的 `ToolPermissionConfig` 算 `allowed_tools()`，而不是只查数组里有没有名字。
+    // ══════════════════════════════════════════════════════════════
+
+    use crate::ai_service::message_system::generator::GeneratorSource;
+    use crate::ai_service::tools::permissions::{
+        GroupPermission, ToolPermissionConfig, DEFAULT_ROLE_GROUP,
+    };
+    use std::collections::HashSet;
+
+    /// 三个世界模拟工具（顺序固定，断言失败时好看）
+    const MAP_TOOLS: [&str; 3] = ["get_my_location", "get_nearby_facilities", "move_to"];
+
+    /// 全量工具注册名（`allowed_tools` 的 `all_names` 入参）
+    fn all_tool_names() -> HashSet<String> {
+        TOOL_GROUPS
+            .iter()
+            .flat_map(|(_, tools)| tools.iter().map(|t| t.to_string()))
+            .chain(std::iter::once("web_search".to_string()))
+            .collect()
+    }
+
+    /// 用户把某个组打开后的权限矩阵。
+    ///
+    /// 从**真实默认矩阵**（`with_default_tools`）起步，再走一遍初始化时那条路：
+    /// 角色落进 `default` 角色组（`enabled = false`）→ `sync_to_permissions`
+    /// 按设置页开关写权限。这样算出来的就是用户真会拿到的那份。
+    fn config_with_group(group: &str, on: bool) -> ToolPermissionConfig {
+        let mut settings = ToolSettings::default();
+        settings.groups.insert(group.to_string(), on);
+        let mut perms = ToolPermissionConfig::with_default_tools(all_tool_names());
+        perms
+            .role_groups
+            .entry(DEFAULT_ROLE_GROUP.to_string())
+            .or_insert_with(GroupPermission::default)
+            .roles
+            .insert("小满".to_string());
+        settings.sync_to_permissions(&mut perms);
+        perms
+    }
+
+    /// 三个地图工具都在 scene 组里（前端设置页那个「场景」开关能带上它们）。
+    #[test]
+    fn map_tools_are_listed_under_the_scene_group() {
+        let scene = TOOL_GROUPS
+            .iter()
+            .find(|(name, _)| *name == "scene")
+            .map(|(_, tools)| *tools)
+            .expect("scene 组必须存在");
+        for tool in MAP_TOOLS {
+            assert!(scene.contains(&tool), "{tool} 必须在 scene 组里: {scene:?}");
+        }
+        // 不许同时挂在别的组里：一个工具两个开关，用户关掉一个以为关干净了，其实没有
+        for (name, tools) in TOOL_GROUPS {
+            if *name == "scene" {
+                continue;
+            }
+            for tool in MAP_TOOLS {
+                assert!(!tools.contains(&tool), "{tool} 不该同时出现在 {name} 组");
+            }
+        }
+    }
+
+    /// 默认配置下三个工具拿不到 —— 这是**官方既有行为**（default 角色组 enabled = false），
+    /// 记录下来，免得后人以为「装好就该能用」。
+    #[test]
+    fn default_settings_deny_every_tool_until_a_group_is_opened() {
+        let perms = config_with_group("scene", false);
+        let allowed = perms.allowed_tools(GeneratorSource::UserChat, Some("小满"), &all_tool_names());
+        assert!(allowed.is_empty(), "默认角色组没启用时必须是空集: {allowed:?}");
+        // 空配置（文件不存在时的那份）同样是空集
+        let empty = ToolPermissionConfig::default();
+        assert!(empty
+            .allowed_tools(GeneratorSource::UserChat, Some("小满"), &all_tool_names())
+            .is_empty());
+    }
+
+    /// 用户在设置页打开「场景」→ 三个地图工具真的下发给模型（整条链路）。
+    #[test]
+    fn opening_the_scene_group_makes_the_three_map_tools_reachable() {
+        let perms = config_with_group("scene", true);
+        let allowed = perms.allowed_tools(GeneratorSource::UserChat, Some("小满"), &all_tool_names());
+        for tool in MAP_TOOLS {
+            assert!(allowed.contains(tool), "打开场景组后 {tool} 必须可达: {allowed:?}");
+        }
+        // 同组的 scene_list/switch 当然也在
+        assert!(allowed.contains("scene_list"));
+        // 没开的组不许漏进来
+        assert!(!allowed.contains("execute_command"), "没开的组不许漏: {allowed:?}");
+        assert!(!allowed.contains("read_file"), "没开的组不许漏: {allowed:?}");
+    }
+
+    /// 「场景」关着时三个工具一个都不给（开关是双向的，不是只加不减）。
+    #[test]
+    fn closing_the_scene_group_takes_the_map_tools_away() {
+        let perms = config_with_group("scene", false);
+        let allowed = perms.allowed_tools(GeneratorSource::UserChat, Some("小满"), &all_tool_names());
+        for tool in MAP_TOOLS {
+            assert!(!allowed.contains(tool), "关掉场景组后 {tool} 不该可达: {allowed:?}");
+        }
+    }
+
+    /// 开别的组不会顺带把地图工具放出来（它们只归 scene 组管）。
+    #[test]
+    fn other_groups_never_smuggle_the_map_tools_in() {
+        for group in ["schedule", "memory", "character", "status", "clock", "skills", "file_ops", "command"] {
+            let perms = config_with_group(group, true);
+            let allowed =
+                perms.allowed_tools(GeneratorSource::UserChat, Some("小满"), &all_tool_names());
+            for tool in MAP_TOOLS {
+                assert!(
+                    !allowed.contains(tool),
+                    "打开 {group} 组不该让 {tool} 可达: {allowed:?}"
+                );
+            }
+        }
+    }
+
+    /// 主动搭话（Proactive → scene_normal）也走同一条路：地图工具在那边同样可达。
+    #[test]
+    fn proactive_source_also_sees_the_map_tools() {
+        let perms = config_with_group("scene", true);
+        let allowed = perms.allowed_tools(GeneratorSource::Proactive, Some("小满"), &all_tool_names());
+        for tool in MAP_TOOLS {
+            assert!(allowed.contains(tool), "Proactive 下 {tool} 也必须可达: {allowed:?}");
+        }
     }
 }

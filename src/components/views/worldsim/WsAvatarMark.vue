@@ -11,17 +11,27 @@
     class="ws-av"
     :class="[
       `ws-av--${size}`,
-      { 'is-me': actor.isMe, 'is-on': selected, 'is-crowd': actor.crowd > 1, 'is-nopic': !picOk },
+      {
+        'is-me': actor.isMe,
+        'is-on': selected,
+        'is-crowd': actor.crowd > 1,
+        'is-nopic': !picOk,
+        'is-dragging': dragging,
+        'is-draggable': drag,
+      },
     ]"
     type="button"
+    data-no-gesture
     :style="style"
     :title="title"
     :aria-label="label"
-    @pointerdown.stop
-    @pointerup.stop
+    @pointerdown.stop="onDown"
+    @pointermove.stop="onMove"
+    @pointerup.stop="onUp"
+    @pointercancel.stop="onCancel"
     @dblclick.stop
     @wheel.stop
-    @click.stop="emit('pick', actor)"
+    @click.stop="onClick"
   >    <span class="ws-av__ring">
       <img
         v-if="actor.avatarUrl && picOk"
@@ -46,6 +56,9 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { letterboxOf, gridToBox, type PlacedActor } from './wsActors'
+// P4-4：拖拽必须与地图手势**同一套口径** —— 阈值 4px、拖后抑制补发的 click（350ms）。
+// 直接复用那两个常量/纯函数，绝不在这里另写一组数（两套数必然手感不一致）。
+import { CLICK_SUPPRESS_MS, isDrag } from '@/composables/useWorldSimGestures'
 
 const props = withDefaults(
   defineProps<{
@@ -68,11 +81,26 @@ const props = withDefaults(
      * （高德/Google Maps 的 POI）的通行做法，也是「地图上的人」能看清的前提。
      */
     zoom?: number
+    /**
+     * P4-4：这个头像能不能被**拖动**（把角色拖到地图别处 = 下一条「去那里」的指令）。
+     *
+     * 默认 **false**：小地图（`size='mini'`）等场景不该能拖，
+     * 只有主地图那一层会打开它（WorldSim 的 `#pin` 插槽）。
+     */
+    drag?: boolean
   }>(),
-  { selected: false, size: 'map', meName: '', zoom: 1 },
+  { selected: false, size: 'map', meName: '', zoom: 1, drag: false },
 )
 
-const emit = defineEmits<{ (e: 'pick', a: PlacedActor): void }>()
+const emit = defineEmits<{
+  (e: 'pick', a: PlacedActor): void
+  /** 超过阈值、真的开始拖了（只发一次） */
+  (e: 'dragstart', a: PlacedActor): void
+  /** 拖动中（每次 pointermove 一次，坐标是 client 坐标） */
+  (e: 'dragmove', p: { a: PlacedActor; clientX: number; clientY: number }): void
+  /** 松手（`moved=false` 表示没超过阈值 = 一次点击，调用方别当拖拽处理） */
+  (e: 'dragend', p: { a: PlacedActor; clientX: number; clientY: number; moved: boolean }): void
+}>()
 
 const { t } = useI18n()
 
@@ -118,6 +146,89 @@ const style = computed(() => {
     transform: `translate(-50%, -50%) scale(${(1 / k).toFixed(4)})`,
   }
 })
+
+/* ── P4-4：把这个人拖到地图别处 ────────────────────────────────────────────
+ *
+ * 三条硬要求（机主给的口径，改之前先读）：
+ *  ① **绝不触发地图平移缩放**：本元素是 `<button>`（在 `useWorldSimGestures` 的
+ *     免手势名单里）**并且**挂了 `data-no-gesture`，指针事件在这里 `.stop` 掉 ——
+ *     地图那套 `pointerdown` 收不到，`pointers` 表一直是空的，所以拖地图的数学
+ *     一次都不会跑（不是「跑了但被忽略」，是根本没启动）。
+ *  ② **阈值 4px**（复用 `isDrag`）：小于它一律当点击，否则「点一下就选中」会失灵。
+ *  ③ 拖完必须**吃掉浏览器补发的那一发 click**（`CLICK_SUPPRESS_MS`）：
+ *     不然松手会顺带触发「选中这个人」，把刚拖到的目的地又盖掉。
+ *
+ * 指针捕获挂在自己的元素上（`setPointerCapture`）：手指滑出这个几十像素的小圆
+ * 以后事件仍然回到这里，否则往远处拖到一半就断了（拖拽最典型的 bug）。
+ */
+const dragging = ref(false)
+let armed = false
+let pid = -1
+let startX = 0
+let startY = 0
+let suppressUntil = 0
+
+function elOf(e: PointerEvent): HTMLElement | null {
+  return (e.currentTarget as HTMLElement) || null
+}
+
+function onDown(e: PointerEvent) {
+  if (!props.drag) return
+  // 只认主键（鼠标右键/中键不参与拖动）；触屏/笔的 button 恒为 0
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  armed = true
+  dragging.value = false
+  pid = e.pointerId
+  startX = e.clientX
+  startY = e.clientY
+  try {
+    elOf(e)?.setPointerCapture(e.pointerId)
+  } catch {
+    /* 老 WebView 不支持捕获：退化也能用，只是拖出元素后可能断 */
+  }
+}
+
+function onMove(e: PointerEvent) {
+  if (!armed || e.pointerId !== pid) return
+  if (!dragging.value) {
+    // 阈值内：还是「可能的点击」，什么都不做（点击选中靠 click 那条路）
+    if (!isDrag(e.clientX - startX, e.clientY - startY)) return
+    dragging.value = true
+    emit('dragstart', props.actor)
+  }
+  emit('dragmove', { a: props.actor, clientX: e.clientX, clientY: e.clientY })
+}
+
+function onUp(e: PointerEvent) {
+  if (!armed || e.pointerId !== pid) return
+  armed = false
+  try {
+    elOf(e)?.releasePointerCapture(e.pointerId)
+  } catch {
+    /* 已经释放/不支持捕获 */
+  }
+  if (!dragging.value) return // 没超过阈值 = 一次点击，交给 onClick
+  dragging.value = false
+  suppressUntil = Date.now() + CLICK_SUPPRESS_MS
+  emit('dragend', { a: props.actor, clientX: e.clientX, clientY: e.clientY, moved: true })
+}
+
+function onCancel() {
+  // 浏览器把手势抢走了（页面开始滚动之类）：干净退出，别留下「半拖着」的状态
+  const wasDragging = dragging.value
+  armed = false
+  dragging.value = false
+  if (wasDragging) {
+    suppressUntil = Date.now() + CLICK_SUPPRESS_MS
+    emit('dragend', { a: props.actor, clientX: startX, clientY: startY, moved: false })
+  }
+}
+
+/** 点一下就选中 —— 拖过的那一发补发的 click 必须拦掉（见上面的 ③） */
+function onClick() {
+  if (Date.now() < suppressUntil) return
+  emit('pick', props.actor)
+}
 </script>
 
 <style scoped>
@@ -232,6 +343,23 @@ const style = computed(() => {
 .ws-av:hover .ws-av__ring,
 .ws-av:focus-visible .ws-av__ring {
   transform: scale(1.1);
+}
+/* P4-4：能被拖的时候给一点暗示（抓手光标 + 选中态放大），拖动中再加一圈高亮。
+   注意：这里只动 transform / opacity / 颜色，不动 left/top/width（动画纪律）。 */
+.ws-av.is-draggable {
+  cursor: grab;
+}
+.ws-av.is-dragging {
+  cursor: grabbing;
+  z-index: 4;
+}
+.ws-av.is-dragging .ws-av__ring {
+  transform: scale(1.22);
+  border-color: var(--ws-accent);
+  box-shadow: var(--ws-shadow-lg);
+}
+.ws-av.is-dragging .ws-av__name {
+  opacity: 0.65;
 }
 /* 小地图上的点：只留圆点，不要名字 */
 .ws-av--mini .ws-av__ring {

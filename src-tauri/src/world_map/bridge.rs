@@ -273,7 +273,13 @@ async fn run_stream(
     // `state::install_facilities` 的文档注释 —— 前端只有 SVG，算不出设施表）。
     // 种子用区域名的哈希而**不是**随机数：同一个小区的店名与位置必须可复现，
     // 否则每次重进都换一批店，AI 上一轮说的「楼下便利店」就找不到了。
-    let facs = super::facilities::generate_all(&layout, &area, None, "district", Some(area_seed(&area)));
+    let facs = super::facilities::generate_all(
+        &layout,
+        &area,
+        None,
+        "district",
+        Some(super::bookmark::area_seed(&area)),
+    );
     let cell_m = facs
         .get("facilities")
         .and_then(Value::as_array)
@@ -292,19 +298,11 @@ async fn run_stream(
     });
 }
 
-/// 区域名 → 稳定的 i64 种子（FNV-1a 64 位，取正）。
-///
-/// 用它而不是 `rand::random()`：设施表一旦随机，同一个小区每次生成都换一批店名与
-/// 摆放，AI 记忆里的「楼下便利店」下一轮就解析不到了（`move::resolve_destination`
-/// 是按名字查设施表的）。可复现比"每次都不一样"重要得多。
-fn area_seed(area: &str) -> i64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in area.trim().as_bytes() {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    (h >> 1) as i64
-}
+// 区域名 → 稳定种子（`super::bookmark::area_seed`，FNV-1a 64 位取正）。
+//
+// 它原来私有在本文件里；P3-1 要把它写进「地图存档」（读档后同一个小区里还得是
+// 那批店），于是搬进 `bookmark.rs` 作为**唯一实现**，这里改成调用它 ——
+// 存档里记的种子与生成设施表用的种子必须是同一个函数，两份实现迟早走偏。
 
 // ───────────────────────── Tauri 命令 ─────────────────────────
 

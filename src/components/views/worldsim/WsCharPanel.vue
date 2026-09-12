@@ -168,7 +168,39 @@
           <div class="ws-panel__hint">{{ chatHint }}</div>
         </section>
 
-        <!-- ⑦ 快捷动作：先做成按钮 + emit，后端能力后接；点了必须有反应 -->
+        <!-- ⑦ P4-4：指挥他 / 干预开关（默认关，开关落 localStorage） -->
+        <WsCollapse :title="t('worldsim.cmd.title')" icon="🧭" :default-open="true">
+          <div class="ws-cmd">
+            <span class="ws-panel__k">{{ t('worldsim.cmd.to') }}</span>
+            <input
+              v-model="destName"
+              class="ws-inp"
+              type="text"
+              :list="DEST_LIST_ID"
+              :placeholder="t('worldsim.cmd.toPlaceholder')"
+              :aria-label="t('worldsim.cmd.to')"
+              @keyup.enter="sendCommand"
+            />
+            <datalist :id="DEST_LIST_ID">
+              <option v-for="d in dests" :key="d" :value="d" />
+            </datalist>
+          </div>
+          <div class="ws-acts">
+            <button class="ws-btn ws-btn--primary" type="button" :disabled="!destName.trim()" @click="sendCommand">
+              {{ t('worldsim.cmd.go') }}
+            </button>
+            <button class="ws-btn" type="button" @click="goChat">{{ t('worldsim.cmd.viaChat') }}</button>
+          </div>
+          <div class="ws-panel__hint">{{ t('worldsim.cmd.hint') }}</div>
+
+          <label class="ws-switch">
+            <input type="checkbox" :checked="interveneOn" @change="onInterveneChange" />
+            <span>{{ interveneOn ? t('worldsim.intervene.on') : t('worldsim.intervene.off') }}</span>
+          </label>
+          <div class="ws-panel__hint">{{ interveneOn ? t('worldsim.intervene.dragHint') : t('worldsim.intervene.hint') }}</div>
+        </WsCollapse>
+
+        <!-- ⑧ 快捷动作（P2-5：打招呼 / 约他出门已接真能力；送礼物方案未定，见弹层） -->
         <WsCollapse :title="t('worldsim.panel.actions')" icon="⚡" :default-open="true">
           <div class="ws-acts">
             <button class="ws-btn" type="button" @click="quick('hi')">👋 {{ t('worldsim.action.hi') }}</button>
@@ -177,6 +209,34 @@
           </div>
           <div class="ws-panel__hint">{{ t('worldsim.action.hint') }}</div>
         </WsCollapse>
+      </div>
+
+      <!-- ⑦.9 送礼物：**需求未澄清**（礼物从哪来 / 送完发生什么，机主还没定）。
+           按纪律：不发明一套礼物系统，只把「还没定 + 两个候选方案」说清楚，
+           接入点留在 WorldSim 的 onQuick('gift') 与这里的 giftOpen 上。
+           弹层挂在抽屉内部：`.ws-drawer` 已有 data-no-gesture 与指针 stop，
+           所以这里不会把事件漏给地图手势。 -->
+      <div v-if="giftOpen" class="ws-giftsheet" data-no-gesture @pointerdown.stop @click.self="giftOpen = false">
+        <div class="ws-giftsheet__card ws-card">
+          <div class="ws-giftsheet__head">
+            <span class="ws-giftsheet__ico" aria-hidden="true">🎁</span>
+            <span class="ws-giftsheet__t">{{ t('worldsim.gift.title') }}</span>
+            <span class="ws-spacer" />
+            <button class="ws-btn ws-btn--ghost" type="button" @click="giftOpen = false">
+              {{ t('worldsim.gift.close') }}
+            </button>
+          </div>
+          <p class="ws-giftsheet__lead">{{ t('worldsim.gift.lead') }}</p>
+          <div class="ws-giftsheet__opt">
+            <div class="ws-giftsheet__optT">{{ t('worldsim.gift.optA') }}</div>
+            <div class="ws-giftsheet__optD">{{ t('worldsim.gift.optADesc') }}</div>
+          </div>
+          <div class="ws-giftsheet__opt">
+            <div class="ws-giftsheet__optT">{{ t('worldsim.gift.optB') }}</div>
+            <div class="ws-giftsheet__optD">{{ t('worldsim.gift.optBDesc') }}</div>
+          </div>
+          <p class="ws-panel__hint">{{ t('worldsim.gift.footer') }}</p>
+        </div>
       </div>
     </aside>
   </div>
@@ -188,10 +248,11 @@ import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
 import WsCollapse from './WsCollapse.vue'
 import WsLoading from './WsLoading.vue'
+import { useWsIntervene, facilityNames } from './wsIntervene'
 import { useWsPortrait } from '@/composables/useWsPortrait'
 import { emotionFile, type WsActors } from '@/composables/useWsActors'
 import type { PlacedActor, ActorPosSource } from './wsActors'
-import { wsToast, wsToastSoon } from './wsToast'
+import { wsToast } from './wsToast'
 
 const props = withDefaults(
   defineProps<{
@@ -218,6 +279,8 @@ const emit = defineEmits<{
   (e: 'portrait', v: boolean): void
   (e: 'goto-chat', a: PlacedActor): void
   (e: 'quick', action: string, a: PlacedActor): void
+  /** P4-4：下一条「让他去某地」的指令（目的地是地名或设施名） */
+  (e: 'direct', to: string, a: PlacedActor): void
 }>()
 
 const { t } = useI18n()
@@ -369,13 +432,35 @@ function goChat() {
   emit('goto-chat', props.actor)
 }
 
-/* ── ⑦ 快捷动作（先接到 emit；没有后端能力时**必须**有可见反应）──────────── */
-function quick(action: string) {
+/* ── ⑦ 快捷动作（P2-5：三个按钮都要有**真**行为或说清楚为什么没有）──────
+ *   · 打招呼  → emit('quick','hi')   → 页面里复用「去找他聊聊」那条路（跳 /chat）
+ *   · 约他出门 → emit('quick','outing') → 页面里调 world_map_trip_start（角色动身）
+ *   · 送礼物  → **需求未澄清**：不发明礼物系统，只把说明弹层打开（两个候选方案）
+ * 三个动作的分派点都收在页面的 onQuick 里（一处就能看全，好测也好改）。 */
+const giftOpen = ref(false)
+
+function quick(action: 'hi' | 'gift' | 'outing') {
   if (!props.actor) return
   emit('quick', action, props.actor)
-  const label =
-    action === 'hi' ? t('worldsim.action.hi') : action === 'gift' ? t('worldsim.action.gift') : t('worldsim.action.outing')
-  wsToastSoon(`${props.actor.name} · ${label}`, t('worldsim.soon'))
+  if (action === 'gift') giftOpen.value = true
+}
+
+/* ── ⑦.5 P4-4：指挥他 + 干预开关 ─────────────────────────────────────────── */
+const DEST_LIST_ID = 'ws-dest-list'
+/** 目的地候选：后端 runtime 里的设施表（拿不到就只有一个空建议列表，手输照样能用） */
+const dests = computed(() => facilityNames(props.data.runtime?.value?.facilities))
+const destName = ref('')
+/** 干预开关（模块级单例，与地图页拖拽读的是同一份；默认关） */
+const { on: interveneOn, setOn: setIntervene } = useWsIntervene()
+
+function onInterveneChange(e: Event) {
+  setIntervene(!!(e.target as HTMLInputElement).checked)
+}
+
+function sendCommand() {
+  const to = destName.value.trim()
+  if (!props.actor || !to) return
+  emit('direct', to, props.actor)
 }
 
 const emotionLabel = computed(() => {
@@ -644,5 +729,96 @@ const panelTitle = computed(() => props.actor?.name || t('worldsim.panel.title')
   display: flex;
   gap: 0.4em;
   flex-wrap: wrap;
+}
+
+/* ── P4-4：指挥他（目的地输入 + 干预开关）────────────────────────────────── */
+.ws-cmd {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+}
+.ws-inp {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.92em;
+  color: var(--ws-fg);
+  background: var(--ws-panel-2);
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius-sm);
+  padding: 0.32em 0.5em;
+}
+.ws-inp:focus-visible {
+  outline: 2px solid var(--ws-primary);
+  outline-offset: 1px;
+}
+/* 干预开关：用原生 checkbox（三套主题下都不会跑版），文字走 i18n */
+.ws-switch {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin-top: 0.55em;
+  font-size: 0.92em;
+  cursor: pointer;
+}
+.ws-switch input {
+  width: 1.05em;
+  height: 1.05em;
+  accent-color: var(--ws-primary-deep);
+}
+
+/* ── 送礼物：说明弹层（方案未定，只解释 + 给候选，不做任何副作用）────────── */
+.ws-giftsheet {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.8em;
+  background: rgba(20, 30, 32, 0.42);
+  animation: ws-fade-in 0.16s ease both;
+}
+.ws-giftsheet__card {
+  width: min(24em, 100%);
+  max-height: 86%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.9em 1em 1em;
+  animation: ws-fade-up 0.2s ease both;
+}
+.ws-giftsheet__head {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+}
+.ws-giftsheet__ico {
+  font-size: 1.1em;
+}
+.ws-giftsheet__t {
+  font-weight: 700;
+}
+.ws-giftsheet__lead {
+  margin: 0.55em 0 0.7em;
+  font-size: 0.9em;
+  line-height: 1.65;
+  color: var(--ws-fg);
+}
+.ws-giftsheet__opt {
+  margin-bottom: 0.5em;
+  padding: 0.5em 0.6em;
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius-sm);
+  background: var(--ws-panel-2);
+}
+.ws-giftsheet__optT {
+  font-weight: 600;
+  font-size: 0.94em;
+}
+.ws-giftsheet__optD {
+  margin-top: 0.2em;
+  font-size: 0.86em;
+  line-height: 1.6;
+  color: var(--ws-fg-dim);
 }
 </style>

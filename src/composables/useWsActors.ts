@@ -33,12 +33,13 @@ import {
   readRuntimePos,
   scatterGrid,
   scheduleLine,
-  spreadCrowd,
+  spreadCrowdMemo,
   type ActorPosSource,
   type MapActor,
   type MeAvatarStored,
   type PlacedActor,
 } from '@/components/views/worldsim/wsActors'
+import { spreadOptsOf } from '@/components/views/worldsim/wsPerf'
 
 /* ── 小工具 ────────────────────────────────────────────────────────────── */
 
@@ -126,6 +127,21 @@ export interface UseWsActorsOptions {
   grid?: Ref<number>
   /** 玩家所在的行政区文案（面板上「我的位置」用） */
   areaLabel?: Ref<string>
+  /**
+   * P5-5：当前是不是「低性能档」（`wsPerf` 的 `low`）。
+   *
+   * 为什么用参数注入而不是在这里 import `useWsPerf()`：这个 composable 的档位
+   * 由**页面**决定（页面才知道 fps 采样结果），注入进来依赖方向最干净，
+   * 也方便自检里塞一个假的 `() => true` 去验证降级分支。
+   * （降级参数本身是纯函数 `spreadOptsOf`，直接从 wsPerf 拿，没有副作用。）
+   */
+  lowPerf?: Ref<boolean> | (() => boolean)
+}
+
+/** 低性能档判定（两个形状都收：Ref 或 getter） */
+function isLow(v: UseWsActorsOptions['lowPerf']): boolean {
+  if (!v) return false
+  return typeof v === 'function' ? !!v() : !!v.value
 }
 
 export function useWsActors(opts: UseWsActorsOptions = {}) {
@@ -376,16 +392,27 @@ export function useWsActors(opts: UseWsActorsOptions = {}) {
    *
    * 顺序固定为「角色在前、玩家在后」：玩家永远压在最上面（不然被角色盖住就点不到了）。
    * 错开只作用在**角色**之间，玩家保持自己的真实坐标。
+   *
+   * ── 重算频率（P5-5 要如实说清楚的一件事）──────────────────────────────
+   *   这里是 **computed**：只在 `actors` / `grid` 变化时重算，**不是逐帧**。
+   *   真实触发点 = 每次 `load()`（进小区图 / 行程到达后重读 / 点浮标刷新）。
+   *   所以真正逐帧的热路径不在这一层，而在**每个头像的 style**（手势缩放时
+   *   每个标记都要重算一次 `scale(1/zoom)`）—— 那一条由 `wsPerf.quantizeZoom`
+   *   在页面侧降频（见 WorldSim 的 districtZoom）。
+   *   这一层在低档做的两件事：① 候选点数 64→12（O(N²) 里的 N）；
+   *   ② `crowd` 改分桶统计；③ 输入指纹没变时直接复用上次结果（连带省下游 diff）。
    */
   const placed = computed<PlacedActor[]>(() => {
     const list = actors.value || []
     const roles = list.filter((a) => !a.isMe)
     const me = list.find((a) => a.isMe) || null
-    const spread = spreadCrowd(
+    const low = isLow(opts.lowPerf)
+    const spread = spreadCrowdMemo(
       roles.map((a) => ({ x: a.gx, y: a.gy })),
       grid.value,
       // 命中半径：格子边长的 5.5%（28 格 → 1.54 格）。太小等于没散，太大会把人挪到别的小区。
       Math.max(0.6, grid.value * 0.055),
+      spreadOptsOf(low),
     )
     const out: PlacedActor[] = roles.map((a, i) => ({
       ...a,
