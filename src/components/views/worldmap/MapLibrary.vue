@@ -1,11 +1,17 @@
 <!--
-  地图库（/api/maplib/*）
+  地图库（列表 / 预览 / 容量清理）
 
   这个页面有一件必须守住的纪律：**清理默认干跑**。
   Python 原型阶段在这个接口上误删过 119 张缓存图，所以这里的交互刻意做成两步：
     ① 点「容量清理」→ 先弹窗、先干跑（dry=1），把「将删除哪些 id / 释放多少」摆出来；
     ② 用户看完列表、亲手勾「我确认按这个列表真删」，才允许发出 dry=0 的删除请求。
   任何一步缺了都发不出真删请求 —— 不靠默认值碰运气。
+
+  数据通路是**双通路**（细节与签名见 api/services/worldMap.ts 末尾的 maplib*Auto）：
+    · 真壳（APK / 桌面）：`invoke('world_map_maplib_list' / '_stats' / '_cleanup')`；
+    · 浏览器 / 局域网调试：HTTP `/api/maplib/*`（老函数原样保留）。
+  唯独**条目本体**（缩略图 / 原文件 / 布局 JSON 文本）在真壳里没有对应命令，
+  见下面 `fileAccess` 那段注释里的降级说明。
 -->
 <template>
   <div class="ml-root">
@@ -63,7 +69,9 @@
       <div v-else class="ml-grid">
         <div v-for="e in entries" :key="e.id" class="ml-card" :title="e.id" @click="preview(e)">
           <div class="ml-thumb">
-            <img v-if="isImage(e)" :src="maplibFileUrl(e.id)" alt="" loading="lazy" @error="onThumbError" />
+            <img v-if="isImage(e) && fileAccess" :src="maplibFileUrl(e.id)" alt="" loading="lazy" @error="onThumbError" />
+            <!-- 真壳：没有取条目本体的命令，缩略图退化成占位（元数据照常显示，列表仍然可用） -->
+            <span v-else-if="isImage(e)" class="ml-file" :title="NOFILE_TIP">🖼<br />需在桌面端查看</span>
             <span v-else class="ml-file">📄<br />JSON</span>
             <span class="ml-kind" :class="'k-' + e.kind">{{ e.kind }}</span>
           </div>
@@ -98,13 +106,24 @@
         <div class="ml-modalhead">
           <span>{{ displayName(sel) }}</span>
           <span class="ml-spacer" />
-          <a class="ml-btn tiny" :href="maplibFileUrl(sel.id)" target="_blank" rel="noreferrer">↗ 原文件</a>
-          <a class="ml-btn tiny" :href="maplibFileUrl(sel.id)" :download="fileName(sel)">⬇ 下载</a>
+          <!-- 真壳里没有「取条目本体」的命令：原文件/下载按钮指向的 HTTP 地址在 APK 里是死的，
+               与其点了没反应（用户会以为坏了），不如换成一句说明 -->
+          <template v-if="fileAccess">
+            <a class="ml-btn tiny" :href="maplibFileUrl(sel.id)" target="_blank" rel="noreferrer">↗ 原文件</a>
+            <a class="ml-btn tiny" :href="maplibFileUrl(sel.id)" :download="fileName(sel)">⬇ 下载</a>
+          </template>
+          <span v-else class="ml-noopen" :title="NOFILE_TIP">🖼 本体需在桌面端查看</span>
           <button class="ml-btn tiny" @click="closePreview">关闭</button>
         </div>
         <div class="ml-modalbody">
-          <img v-if="isImage(sel)" :src="maplibFileUrl(sel.id)" alt="" />
-          <pre v-else class="ml-json">{{ jsonPreview }}</pre>
+          <img v-if="isImage(sel) && fileAccess" :src="maplibFileUrl(sel.id)" alt="" />
+          <pre v-else-if="!isImage(sel)" class="ml-json">{{ jsonPreview }}</pre>
+          <div v-else class="ml-nopreview">
+            这张图存在地图库里（{{ sel.path }}，{{ fmtBytes(sel.bytes) }}），
+            但应用内还没有读取条目本体的命令，所以看不到大图。<br />
+            元数据仍然可用：adcode {{ sel.adcode }} · 风格 {{ sel.style || '—' }} ·
+            生成 {{ fmtStamp(sel.createdAt) }}
+          </div>
         </div>
         <div class="ml-modalfoot">
           <span>id <code>{{ sel.id }}</code></span>
@@ -172,9 +191,10 @@ import { useRouter } from 'vue-router'
 import {
   fmtBytes,
   fmtStamp,
-  maplibCleanup,
+  isTauriRuntime,
+  maplibCleanupAuto,
   maplibFileUrl,
-  maplibList,
+  maplibListAuto,
   type MapLibCleanupResult,
   type MapLibEntry,
   type MapLibSort,
@@ -182,6 +202,31 @@ import {
 } from '@/api/services/worldMap'
 
 const router = useRouter()
+
+/**
+ * 能不能直接读「条目本体」（缩略图 / 大图 / 布局 JSON 文本 / 原文件下载）。
+ *
+ * 为什么真壳里不行：本体是靠 **HTTP** 路由 `/api/maplib/file?id=…` 取的
+ * （见 worldMap.ts 的 `maplibFileUrl()`），而 APK 里根本没有那个本地服务；
+ * Rust 侧目前注册的命令只有 `world_map_maplib_list` / `_stats` / `_cleanup`
+ * 三个（已逐一核对 src-tauri/src/lib.rs 的 generate_handler 注册表），
+ * **没有**任何「按 id 取条目内容 / 取条目绝对路径」的命令，也没有暴露地图库根目录，
+ * 所以前端拿不到能交给 `convertFileSrc()` 的路径 —— 这一条只能优雅降级：
+ *   · 列表、容量条、分类统计、排序、过滤、清理（含干跑）：全部照常，走命令；
+ *   · 缩略图 / 大图：换成「需在桌面端查看」占位，元数据（adcode / 风格 / 体积 / 时间）照常显示；
+ *   · 原文件 / 下载：不渲染成死链接；
+ *   · 布局 JSON 的文本预览：给一句说明，不再发那个必然失败的请求。
+ *
+ * TODO（要补的命令）：给 Rust 侧加一个二选一即可 ——
+ *   ① `world_map_maplib_file(id: String) -> Result<{ mime: String, data_base64: String }, String>`
+ *      前端拼成 data URL；体积小但要把图片塞进 IPC（大图会慢）。
+ *   ② `world_map_maplib_file_path(id: String) -> Result<String, String>` 返回绝对路径，
+ *      前端 `convertFileSrc(path)` 直接给 <img>（更快，推荐）。
+ *   两个都实现前，这里的降级必须留着，别把 fileAccess 写死成 true。
+ */
+const fileAccess = !isTauriRuntime()
+/** 提示语只写一处，占位与按钮共用（避免两处说法不一致） */
+const NOFILE_TIP = '应用内还没有读取地图库条目本体的命令（world_map_maplib_file / _file_path），需在桌面端查看'
 
 const KINDS = [
   { id: '', label: '全部' },
@@ -268,7 +313,7 @@ async function reload(keepErr = false) {
   loading.value = true
   if (!keepErr) err.value = ''
   try {
-    const d = await maplibList({
+    const d = await maplibListAuto({
       kind: kind.value || undefined,
       ad: adFilter.value.trim() || undefined,
       limit: limit.value,
@@ -277,7 +322,9 @@ async function reload(keepErr = false) {
     entries.value = d?.entries || []
     stats.value = d?.stats || null
   } catch (e) {
-    err.value = `读取地图库失败：${(e as Error)?.message || e}（服务在 127.0.0.1:8791 吗？）`
+    // 提示要按通路说：真壳里没有 8791 服务，写「服务在 127.0.0.1:8791 吗」会把人带偏
+    const where = isTauriRuntime() ? '本地命令 world_map_maplib_list' : '服务 127.0.0.1:8791'
+    err.value = `读取地图库失败：${(e as Error)?.message || e}（${where}）`
     entries.value = []
   } finally {
     loading.value = false
@@ -288,9 +335,16 @@ async function preview(e: MapLibEntry) {
   sel.value = e
   jsonPreview.value = ''
   if (isImage(e)) return
+  // 真壳：`/api/maplib/file` 不存在（见 fileAccess 的注释），别发这个必然失败的请求，
+  // 直接给一句可读说明；元数据在弹窗底部照常显示。
+  if (!fileAccess) {
+    jsonPreview.value = `（应用内暂不支持读取条目本体，布局 JSON 的文本预览需在桌面端查看）\n\n路径：${e.path}\n体积：${fmtBytes(e.bytes)}\n\n${NOFILE_TIP}`
+    return
+  }
   // JSON 条目（布局存档）：取回文本给个受控预览，别整份塞进 DOM
   try {
     const res = await fetch(maplibFileUrl(e.id), { cache: 'no-store' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const text = await res.text()
     jsonPreview.value = text.length > 6000 ? text.slice(0, 6000) + '\n…（已截断）' : text
   } catch (er) {
@@ -318,7 +372,7 @@ async function doDryRun() {
   dryResult.value = null
   cleanConfirm.value = false
   try {
-    dryResult.value = await maplibCleanup({ maxMb: cleanMaxMb.value, dry: true })
+    dryResult.value = await maplibCleanupAuto({ maxMb: cleanMaxMb.value, dry: true })
     cleanMsg.value = `干跑完成：将删除 ${dryResult.value.removed} 个，释放 ${dryResult.value.freed_mb} MB`
   } catch (e) {
     cleanMsg.value = `干跑失败：${(e as Error)?.message || e}`
@@ -332,7 +386,7 @@ async function doPurge() {
   if (!canPurge.value) return
   cleanLoading.value = true
   try {
-    const r = await maplibCleanup({ maxMb: cleanMaxMb.value, dry: false })
+    const r = await maplibCleanupAuto({ maxMb: cleanMaxMb.value, dry: false })
     cleanMsg.value = `已清理 ${r.removed} 个，释放 ${r.freed_mb} MB`
     dryResult.value = null
     cleanConfirm.value = false
@@ -539,6 +593,28 @@ onMounted(() => {
   font-size: 11.5px;
   text-align: center;
   line-height: 1.5;
+  padding: 0 6px;
+}
+/* 真壳里的降级占位（读不到条目本体）：卡片/弹窗都不能因此塌掉或留白 */
+.ml-noopen {
+  font-size: 11px;
+  color: #8fa6bd;
+  border: 1px dashed rgba(143, 166, 189, 0.45);
+  border-radius: 8px;
+  padding: 3px 8px;
+  cursor: help;
+}
+.ml-nopreview {
+  max-width: 520px;
+  padding: 14px 16px;
+  border: 1px dashed rgba(143, 166, 189, 0.4);
+  border-radius: 10px;
+  background: #0a121b;
+  color: #a9c0d6;
+  font-size: 12px;
+  line-height: 1.7;
+  text-align: center;
+  word-break: break-all;
 }
 .ml-kind {
   position: absolute;

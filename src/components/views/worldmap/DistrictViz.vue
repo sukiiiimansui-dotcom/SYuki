@@ -1,7 +1,7 @@
 <!--
   小区可视化对照（数据 / 图层 / 伪 3D）
 
-  三种视图共用**同一张后端渲染的 SVG**（/api/render/probe 直接回 SVG 文本，fetch 完塞进 v-html）：
+  三种视图共用**同一张后端渲染的 SVG**（渲染结果是一段 SVG 文本，拿到后塞进 v-html）：
     · 数据可视化：前端把这张 SVG 当数据源解析（g.wm-bld 上带着 data-type/data-floors/data-w/data-h），
       按后端 stats.rs 同一套口径现算指标 —— 所以面板数字和图里后端画的数据卡片可以互相印证；
       需要后端卡片时加 ?charts=1，卡片会被画进 SVG 右上角。
@@ -9,6 +9,10 @@
     · 伪 3D：mode=3d 由后端按楼层挤出立体块，这个只能重新请求（渲染发生在后端）。
 
   为什么要缓存 SVG：切视图 / 来回切 2D-3D 时同参数的图只请求一次，手机上等一次就够了。
+
+  取图走**双通路**（见 api/services/worldMap.ts 的 districtRenderSvg）：
+  真壳（APK / 桌面）`invoke('world_map_render')`，浏览器预览才走 HTTP `/api/render/probe`
+  —— 打包后手机上并没有 8791 那个服务，写死 HTTP 的话这一页永远是「渲染失败」。
 -->
 <template>
   <div class="vz-root">
@@ -176,7 +180,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { renderProbeSvg, renderProbeUrl, type RenderProbeOpts } from '@/api/services/worldMap'
+import { districtRenderSvg, isTauriRuntime, renderProbeUrl, type RenderProbeOpts } from '@/api/services/worldMap'
 import { TYPE_COLOR, TYPE_ZH } from './districtDraw'
 
 const router = useRouter()
@@ -461,11 +465,16 @@ async function reload(force = false) {
     // 固定 seed：切图层/切视图时图不变，用户改的才是「显隐」而不是「换了一张图」
     seed: 7,
   }
-  const key = renderProbeUrl(opts)
+  // 缓存键只要求「同参数 → 同键」，与走哪条通路无关：
+  // 浏览器路径沿用它原来的 HTTP 地址（对着日志好排查），真壳里没有地址，用参数序列化。
+  const key = isTauriRuntime()
+    ? `rust|${opts.style}|${opts.mode}|${opts.zoom}|${opts.size}|${opts.charts ? 1 : 0}|${opts.seed}`
+    : renderProbeUrl(opts)
   try {
     let text = cache.get(key)
     if (!text || force) {
-      text = await renderProbeSvg(opts)
+      // 双通路：真壳 invoke `world_map_render`（APK 里没有 8791 服务），浏览器仍走 HTTP 探针。
+      text = await districtRenderSvg(opts)
       cache.set(key, text)
     }
     svgText.value = text
@@ -498,6 +507,13 @@ function exportSvg() {
 
 /** 新窗口看原图：部分 WebView 会拦 window.open，所以要给失败提示而不是静默 */
 function openRaw() {
+  // 真壳里没有 8791 那个 HTTP 服务，`renderProbeUrl()` 拼出来的地址打不开（会开出一张空白页，
+  // 用户只会以为「图坏了」）。所以真壳直接引导到本页已有的「导出这张 SVG」——
+  // 那条路用的是已经拿到的 svgText，不依赖任何服务。
+  if (isTauriRuntime()) {
+    err.value = '应用内没有本地网页服务，打不开裸图地址；请用「⬇ 导出 SVG」保存后用外部工具查看'
+    return
+  }
   try {
     const w = window.open(renderProbeUrl({ style: style.value, mode: mode.value, zoom: zoom.value, size: size.value }), '_blank')
     if (!w) err.value = '新窗口被拦截了，可以改用「导出这张 SVG」'

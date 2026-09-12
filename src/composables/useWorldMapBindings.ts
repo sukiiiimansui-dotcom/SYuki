@@ -7,7 +7,7 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { characterGetAll, getCharacterFilePath } from '@/api/services/character'
 import type { Character } from '@/types'
-import worldMapApi, { type SchedulePayload } from '@/api/services/worldMap'
+import worldMapApi, { isTauriRuntime, type SchedulePayload } from '@/api/services/worldMap'
 import { loadWorldModules, worldModule } from './useWorldModules'
 
 export interface WorldCharacter {
@@ -47,22 +47,43 @@ export async function loadWorldCharacters(force = false): Promise<WorldCharacter
         folder,
       })
     }
-  } catch (e) {
-    // 不在 Tauri 环境（纯浏览器调试）或接口异常：退回用后端的角色目录
+  } catch (e1) {
+    // LingChat 自己的角色接口没拿到（不在 Tauri 环境 / 接口异常）：退回「后端角色目录」。
+    // 两条通路：
+    //   · 浏览器预览 → HTTP `/api/schedule/chars`（老路，调试服务上有这个路由）；
+    //   · 真壳（APK / 桌面）→ **没有**这个 HTTP 路由，也没有对应的 Tauri 命令，
+    //     但 `world_map_schedule` 的返回里本来就带 `characters`
+    //     （Rust 侧 schedule::payload() 与 HTTP 版 /api/schedule 同形），
+    //     直接复用它 —— 同一份数据，还少一次请求，也不用新加 Rust 命令。
     try {
-      const r = await fetch(`${worldMapApi.apiBase}/api/schedule/chars`, { cache: 'no-store' })
-      const d = await r.json()
-      for (const c of d?.characters || []) {
+      let chars: { name?: string; folder?: string; info?: string }[] = []
+      if (isTauriRuntime()) {
+        const s = await worldMapApi.schedule()
+        chars = s?.characters || []
+      } else {
+        const r = await fetch(`${worldMapApi.apiBase}/api/schedule/chars`, { cache: 'no-store' })
+        if (!r.ok) throw new Error(`/api/schedule/chars 返回 ${r.status}`)
+        const d = (await r.json()) as { characters?: { name?: string; folder?: string; info?: string }[] }
+        chars = d?.characters || []
+      }
+      for (const c of chars) {
         out.push({
-          id: c.folder || c.name,
-          name: c.name,
+          id: c.folder || c.name || '',
+          name: c.name || c.folder || '',
           persona: (c.info || '').slice(0, 200),
           avatarUrl: '',
           folder: c.folder || '',
         })
       }
-    } catch {
-      /* 两边都拿不到就保持空 */
+    } catch (e2) {
+      // ⚠️ 这里**故意不再静默**：两条通路都失败时，地图上就没有带头像的 NPC，
+      // 现象是「通讯录空的、NPC 全是点」——不打印的话真机上根本没法定位。
+      // 用中文 warn（便于真机抓日志），并且不抛错：地图本身还要能用。
+      console.warn(
+        '[世界地图] 角色名单两条通路都没拿到，地图/通讯录里不会有 LingChat 角色：',
+        isTauriRuntime() ? '通路=world_map_schedule（真壳）' : '通路=/api/schedule/chars（浏览器）',
+        { 角色接口错误: e1, 降级接口错误: e2 },
+      )
     }
   }
   cachedCharacters = out

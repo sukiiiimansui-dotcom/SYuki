@@ -1,13 +1,37 @@
 // 世界地图数据层（T6-1）
 //
 // 数据来源集中在这里，组件不感知底层：
-//   · 现在：HTTP → Python 侧车服务（127.0.0.1:8790，runit 常驻）
-//   · T6-5 完成后：切到 Tauri invoke（Rust 本地实现）
-// 切换只需把 USE_RUST 改 true 并补 world_map_* 命令。
+//   · Tauri 应用内（APK / 桌面）：`invoke` → Rust 本地实现（src-tauri/src/world_map/）
+//   · 纯浏览器预览 / 局域网调试：HTTP → Rust 调试服务（127.0.0.1:8791）
+// 两条通路的**分流是自动的**（见下面的 isTauriRuntime），不需要再手改常量：
+// 打包成 APK 之后手机上根本没有 8791 那个进程，写死 HTTP 必然显示「世界地图服务未启动」。
 import { Channel, invoke } from '@tauri-apps/api/core'
 
-/** 是否已切到 Rust 本地实现（T6-5） */
-export const USE_RUST = false
+/**
+ * 当前是不是**真的**跑在 Tauri 壳里（而不是浏览器预览）。
+ *
+ * 判定必须同时满足两条，缺一不可：
+ *   ① `window.__TAURI_INTERNALS__` 存在 —— 真壳由 Rust 注入；
+ *   ② 没有 `__LINGCHAT_WEB_MOCK__` 标记 —— `src/web-mock.ts` 在纯 web 预览时会**伪造**
+ *      一份 `__TAURI_INTERNALS__`，而它的 invoke 对所有 `world_map_*` 一律返回 undefined
+ *      （等价于「命令不存在」）。只看 ① 会把 web 预览误判成真壳，
+ *      地图请求全打到 mock 上 → 页面永远空白。
+ */
+export function isTauriRuntime(): boolean {
+  if (typeof window === 'undefined') return false // 非浏览器环境（SSR / 测试）兜底
+  if (!window.__TAURI_INTERNALS__) return false
+  return !window.__LINGCHAT_WEB_MOCK__
+}
+
+/**
+ * 是否走 Rust 本地实现 —— 保留这个既有导出名（别处可能在引用），
+ * 值就是上面的自动判别结果，而**不再是写死的 false**。
+ *
+ * 注意：这是「模块加载那一刻」的快照；接口内部一律用 `isTauriRuntime()` 实时判定，
+ * 这样不受模块求值顺序影响（`src/main.ts` 第一行 `import "./web-mock"` 会先执行，
+ * 但测试 / 别的入口未必这么排）。
+ */
+export const USE_RUST = isTauriRuntime()
 
 // 后端地址可用 VITE_WORLD_MAP_API 覆盖（默认指向 Rust 版，见 docs/world-map/07）。
 // 两个实现返回结构完全一致，所以换端口不需要改任何组件：
@@ -173,37 +197,129 @@ const http = {
   maplibFile: (id: string) => `${API_BASE}/api/maplib/file?id=${encodeURIComponent(id)}`,
 }
 
-// ── 对外统一出口（Rust 版就绪后在这里分流）──
+// ── 降级工具 ──
+
+/**
+ * 给 invoke 套一层超时。
+ *
+ * 为什么需要：命令**没注册**时 Tauri 会立刻 reject（好办，catch 就行），
+ * 但如果哪天命令注册了却在 Rust 侧卡住（比如等 GPS / 等网络），
+ * 页面会永远停在「加载中…」—— 那比报错更难查。超时后走降级分支，至少页面能继续用。
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${what} 调用超时（${ms}ms）`)), ms)
+    p.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 为什么 `location` / `weather` 在 Tauri 下要**降级**而不是直接 invoke
+//
+// 现状（已核对 src-tauri/src/lib.rs 的 generate_handler 注册表）：
+//   `world_map_location` 与 `world_map_weather` **两个命令都还没实现**。
+//   Rust 侧目前有的是：blocks / blocks_at / render / render_svg / geo_svg / geo_status /
+//   coord_selftest / stats / maplib_* / schedule / transport_plan / osm_summary / time /
+//   push_events / recent_events / district_stream(_cancel)。
+//   所以真壳里直接 invoke 这两个名字 → 命令不存在 → reject；
+//   若没人接住，页面就只剩一句报错（甚至白屏）。
+//
+// 因此这里做**数据层降级**（页面一行都不用改）：
+//   location：invoke（将来能用）→ HTTP 兜底 → `{error,hint}` 让页面走已有的「定位失败」路径
+//   weather ：invoke（将来能用）→ HTTP 兜底 → 空对象，顶栏少个标签而已
+//
+// 后续要补的（Rust 侧，不在本次前端改动范围内）：
+//   ① `world_map_location(opts)`：Android 走系统定位权限，桌面走系统 API；
+//      明确**不要**照搬 termux-location（那是 Termux:API 的东西，装进 APK 必然失败）；
+//   ② `world_map_weather(city)`：可以复用 Rust 侧的天气源，返回结构与 `/api/weather` 一致
+//      （`{current:{temp_c,desc}}` 这一层，见 WorldMap.vue 的 loadTimeWeather）。
+//   补完后前端**不用再改**：上面的 try 分支一命中，降级代码自然不再执行。
+// ═══════════════════════════════════════════════════════════════════
+
+// ── 对外统一出口（真壳 / 浏览器在这里自动分流）──
+//
+// 每个分支都用 `isTauriRuntime()` 实时判定（而不是读上面那个常量快照），
+// 免得判早了或判晚了一格导致整页失效。
 export const worldMapApi = {
   blocks: async (ad?: string, style = 'gaode', limit = 6): Promise<BlocksPayload> => {
-    if (USE_RUST) {
+    if (isTauriRuntime()) {
       return invoke<BlocksPayload>('world_map_blocks', { ad, style, limit })
     }
     return http.blocks(ad, style, limit)
   },
   blocksByLatLng: async (lat: number, lng: number, style = 'gaode', limit = 6): Promise<BlocksPayload> => {
-    if (USE_RUST) {
+    if (isTauriRuntime()) {
       return invoke<BlocksPayload>('world_map_blocks_at', { lat, lng, style, limit })
     }
     return http.blocksByLatLng(lat, lng, style, limit)
   },
+  // ── 定位：Rust 侧**还没有** `world_map_location` 命令（降级原因见上方整段说明）──
   location: async (opts?: { force?: boolean; fast?: boolean; lat?: number; lng?: number }): Promise<WorldLocation> => {
-    if (USE_RUST) return invoke<WorldLocation>('world_map_location', { ...opts })
-    return http.location(opts)
+    if (!isTauriRuntime()) return http.location(opts)
+    // ① 先试真命令：Rust 侧一旦补上 `world_map_location`，这里自动就通了，前端不用再改。
+    try {
+      return await withTimeout(invoke<WorldLocation>('world_map_location', { ...opts }), 6000, '定位')
+    } catch {
+      /* 命令不存在 / 超时 → 往下走降级 */
+    }
+    // ② 降级一：HTTP 兜底（真机上是「自己连自己」，通常连不上；
+    //    但局域网调试、桌面版同时起着 8791 调试服务时仍然可用）。
+    try {
+      return await http.location(opts)
+    } catch {
+      /* 两条都不通 → 往下走 ③ */
+    }
+    // ③ 降级二：返回一个**页面能读懂的结果**（不抛异常）。
+    //    WorldMap.vue 里 relocate() 判的是 `loc.error`，拿到 error 就显示 hint 并回到默认城市，
+    //    绝不会白屏；用户也可以直接用「刷新」走默认区域。
+    return {
+      lat: 0,
+      lng: 0,
+      error: '定位不可用',
+      hint: '应用内暂不支持自动定位，请手动选择区域（或直接填区域名）',
+      source: 'none',
+    }
   },
-  time: async (): Promise<WorldTime> => (USE_RUST ? invoke<WorldTime>('world_map_time') : http.time()),
-  weather: async (city?: string): Promise<WorldWeather> =>
-    (USE_RUST ? invoke<WorldWeather>('world_map_weather', { city }) : http.weather(city)),
+  time: async (): Promise<WorldTime> => (isTauriRuntime() ? invoke<WorldTime>('world_map_time') : http.time()),
+  // ── 天气：Rust 侧**还没有** `world_map_weather` 命令（降级原因见上方整段说明）──
+  weather: async (city?: string): Promise<WorldWeather> => {
+    if (!isTauriRuntime()) return http.weather(city)
+    try {
+      return await withTimeout(invoke<WorldWeather>('world_map_weather', { city }), 5000, '天气')
+    } catch {
+      /* 命令不存在 / 超时 → 降级 */
+    }
+    try {
+      return await http.weather(city)
+    } catch {
+      // 拿不到天气不是错误：WorldMap.vue 的 loadTimeWeather() 已经把 weatherText 留空，
+      // 顶栏少一个标签而已，不打扰主流程。返回空对象比抛异常干净。
+      return {}
+    }
+  },
   schedule: async (now?: string, area?: string): Promise<SchedulePayload> =>
-    (USE_RUST ? invoke<SchedulePayload>('world_map_schedule', { now, area }) : http.schedule(now, area)),
+    (isTauriRuntime() ? invoke<SchedulePayload>('world_map_schedule', { now, area }) : http.schedule(now, area)),
   transportPlan: async (
     a: { lat: number; lng: number },
     b: { lat: number; lng: number },
     prefer?: string,
   ): Promise<TransportPlan> => {
-    if (USE_RUST) return invoke<TransportPlan>('world_map_transport_plan', { from: a, to: b, prefer })
+    if (isTauriRuntime()) return invoke<TransportPlan>('world_map_transport_plan', { from: a, to: b, prefer })
     return http.transportPlan(a, b, prefer)
   },
+  // 下面三个是**死代码**（全仓 grep 无调用方，仅为兼容保留）：
+  // mapImg → `/api/map`、bigmapImg → `/api/bigmap_img` 都是 Python 侧车（8790）时代的路由，
+  // Rust 服务（8791）与打包后的应用内**都没有**这两条路由（实测 404）。
+  // 新代码请用文件末尾的 `mapSvgUrl()`（双通路）或 `bigmapSvgUrl()`（仅浏览器）。
   mapImg: http.mapImg,
   bigmapImg: http.bigmapImg,
   maplibFile: http.maplibFile,
@@ -332,6 +448,10 @@ export function districtStreamUrl(opts: DistrictStreamOpts = {}): string {
 // 那是 Python 侧车（8790）时代的路由，Rust 版（8791）实测 **404**
 // （全仓 grep 过，目前没有调用方，属于死代码；但既有导出按约定不动），
 // 所以这里补一个走 `/api/bigmap` 的正确地址给新页面用。
+//
+// 注意②：这个函数拼的是**纯 HTTP 地址**，只适合「明确知道自己在浏览器里」的场景
+// （如 worldmap/PhoneOverlay.vue 的形态预览）。要图片在 **Tauri 应用内**也能出来，
+// 必须用文件末尾的 `mapSvgUrl()`（真壳走 invoke，不依赖任何本地端口）。
 export function bigmapSvgUrl(ad: string, style = 'gaode', scale = 1): string {
   const q = new URLSearchParams({ ad: ad || '', style, scale: String(scale) })
   return `${API_BASE}/api/bigmap?${q.toString()}`
@@ -532,6 +652,8 @@ declare global {
     __WM_DISTRICT_TRANSPORT__?: DistrictTransport
     /** 纯 web 预览标记，由 src/web-mock.ts 打上 */
     __LINGCHAT_WEB_MOCK__?: boolean
+    /** Tauri 壳注入的运行时（真壳由 Rust 注入；web-mock 会伪造一份，见 isTauriRuntime） */
+    __TAURI_INTERNALS__?: any
   }
 }
 
@@ -539,18 +661,14 @@ declare global {
  * 这一轮该走哪条通路。
  *
  * ① 先看显式开关（`__WM_DISTRICT_TRANSPORT__`），调试时可强制走某一条；
- * ② 再看 `window.__TAURI_INTERNALS__`（真壳由 Rust 注入，项目里判断 Tauri 就是这么判的）；
- * ③ 但**纯 web 预览**时 `src/web-mock.ts` 会伪造一份 `__TAURI_INTERNALS__`，它的 invoke
- *    对 `world_map_*` 一律返回 undefined（等价于「命令不存在」）—— 那样页面会永远停在
- *    「连接中…」，所以用 mock 自己打的 `__LINGCHAT_WEB_MOCK__` 标记把它排除，让它退回 EventSource。
+ * ② 其余交给 `isTauriRuntime()`（真壳 vs web-mock 的判别全在那一个函数里，别处别再抄一遍）。
  */
 function useTauriTransport(): boolean {
   if (typeof window === 'undefined') return false // 非浏览器环境（SSR / 测试）兜底
   const forced = window.__WM_DISTRICT_TRANSPORT__
   if (forced === 'tauri') return true
   if (forced === 'http') return false
-  if (!window.__TAURI_INTERNALS__) return false
-  return !window.__LINGCHAT_WEB_MOCK__
+  return isTauriRuntime()
 }
 
 /** invoke 的 reject 有的是 string（Rust 的 `Err(String)`），有的是 Error，统一成人话 */
@@ -721,4 +839,236 @@ export function startDistrictStream(
   return startHttpDistrictStream(opts, onEvent, onDone, onError)
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// 区域主图：**双通路**取图（Tauri 命令 / HTTP），给 `<img src>` 用
+//
+// 为什么要这层封装：WorldMap.vue / WorldMapLayer.vue 原来直接拼
+// `http://127.0.0.1:8791/api/bigmap?...` 塞给 `<img>`。那是**独立调试服务**的地址，
+// 打包成 APK 之后手机上没有任何进程监听 8791 → 图片必然加载失败，
+// 地图页只剩一句「世界地图服务未启动」和一个空舞台。
+//
+// 真壳里改走 Tauri 命令 `world_map_geo_svg`（Rust 本地渲染，不需要端口、不需要网络），
+// 拿回的 SVG 文本转成 data URL 再塞进 `<img>` —— 组件那套 @error / 刷新逻辑一行都不用改。
+//
+// **尺寸必须跟着容器走**（机主专门提过）：SVG 里字号是「固定 px」（见 Rust 侧
+// render_geo.rs 的 level_style：全国 13.5 / 省 12 / 市 11 / 区县 10.5，再乘各区面积占比
+// 0.75~1.6，实测最小 8.2px），跟画布尺寸无关。
+// 若固定按 1000×760 画、在手机上被缩到 360px 显示，8~12px 的字实际只剩 3~4px，完全看不清；
+// 把容器真实 CSS 像素传下去，画布与显示尺寸 1:1，字号是多少就显示多少（约放大 2.7 倍）。
+// ═══════════════════════════════════════════════════════════════════
+
+/** 拿不到容器尺寸时的兜底画布（与 Rust 渲染器 / `/api/bigmap` 的默认值一致） */
+export const MAP_SVG_DEFAULT_W = 1000
+export const MAP_SVG_DEFAULT_H = 760
+
+/** SVG 文本 → 可直接塞进 `<img src>` 的 data URL */
+function svgToDataUrl(svg: string): string {
+  const text = String(svg || '').trim()
+  if (!text.startsWith('<')) throw new Error('后端没有返回 SVG')
+  // 用 encodeURIComponent：SVG 里的 `#`（颜色）、中文地名、`<>&` 都会被转义，
+  // 否则 data URL 会在第一个 `#` 处被截断成「只画了一半」的图。
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(text)
+}
+
+/**
+ * 取一份 SVG 文本。后端出错时回的是 JSON（甚至 HTML），
+ * 这里提前翻译成人话，免得把 JSON 当图片塞给 `<img>` 后只看到一句「加载失败」。
+ */
+async function fetchSvgText(url: string): Promise<string> {
+  const res = await fetch(url, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`地图接口返回 ${res.status}`)
+  const ct = (res.headers.get('content-type') || '').toLowerCase()
+  if (ct.startsWith('image/') && !ct.includes('svg')) throw new Error('后端返回的是位图，不是可缩放的 SVG')
+  const text = await res.text()
+  // 只看开头一段就够：真正的 SVG 一定是 `<svg ...>` 打头（最多前面有 `<?xml ...?>`）
+  if (!/<svg[\s>]/i.test(text.slice(0, 400))) {
+    let msg = text.slice(0, 200)
+    try {
+      const j = JSON.parse(text) as { error?: string }
+      if (j?.error) msg = j.error
+    } catch {
+      /* 不是 JSON 就原样显示前 200 字 */
+    }
+    throw new Error(msg || '地图渲染失败')
+  }
+  return text
+}
+
+/**
+ * 取区域主图，返回**可直接给 `<img src>` 的 data URL**。
+ *
+ * @param ad    行政区划 adcode（全国 `100000`；空值时抛错，免得后面拿到一张别的图）
+ * @param style gaode（默认）/ dark / water
+ * @param w     容器实际 CSS 像素宽（`getBoundingClientRect().width`）
+ * @param h     容器实际 CSS 像素高
+ *
+ * 失败一律 **throw**：调用方（组件）捕获后把 src 置空并走自己已有的错误提示路径，
+ * 绝不让一个未捕获的 rejection 冒到控制台、也不让页面卡在「加载中…」。
+ */
+export async function mapSvgUrl(
+  ad: string,
+  style = 'gaode',
+  w: number = MAP_SVG_DEFAULT_W,
+  h: number = MAP_SVG_DEFAULT_H,
+): Promise<string> {
+  const code = String(ad || '').trim()
+  if (!code) throw new Error('缺少 adcode，取不到地图')
+  // 兜底 + 取整：0 / NaN 会让 SVG 的 width/height 属性坏掉，`<img>` 直接空白
+  const width = Math.max(64, Math.round(Number(w) || MAP_SVG_DEFAULT_W))
+  const height = Math.max(64, Math.round(Number(h) || MAP_SVG_DEFAULT_H))
+
+  // ── ① 真壳：Tauri 命令 ──
+  if (isTauriRuntime()) {
+    // 命令名与参数名**逐一核对过** src-tauri/src/world_map/mod.rs 的：
+    //   pub async fn world_map_geo_svg(app, ad: Option<String>, style: Option<String>,
+    //        width: Option<f64>, height: Option<f64>, pad, zoom, labels, dots, stats) -> Result<String, String>
+    // Tauri 的 JS 侧参数是 camelCase，这条命令的形参都是单词，所以原样传即可；
+    // 其余可选参数（pad/zoom/labels/dots/stats）走 Rust 侧默认值，这里不传。
+    const svg = await invoke<string>('world_map_geo_svg', { ad: code, style, width, height })
+    return svgToDataUrl(svg)
+  }
+
+  // ── ② 浏览器 / 局域网调试：HTTP ──
+  // 首选 `/api/geo_svg`：它是 `world_map_geo_svg` 命令在调试服务上的**孪生路由**，
+  // 同样认 w/h，所以浏览器预览与真机看到的排版是一致的（字大小不会两套）。
+  const geoUrl =
+    `${API_BASE}/api/geo_svg?ad=${encodeURIComponent(code)}` +
+    `&style=${encodeURIComponent(style)}&w=${width}&h=${height}&zoom=2`
+  try {
+    return svgToDataUrl(await fetchSvgText(geoUrl))
+  } catch (e) {
+    // 兜底：老一些的后端只有 `/api/bigmap`（Rust 调试服务两条都有；Python 侧车只有 bigmap，
+    // 而且它回的是 **PNG** → 会在 fetchSvgText 里被识别成位图并报错，这也是预期内的降级终点）。
+    // 注意 bigmap **不认 w/h**（只认 scale），所以这条兜底路径忽略尺寸、沿用旧行为。
+    try {
+      const bigUrl =
+        `${API_BASE}/api/bigmap?ad=${encodeURIComponent(code)}` +
+        `&style=${encodeURIComponent(style)}&scale=1`
+      return svgToDataUrl(await fetchSvgText(bigUrl))
+    } catch (e2) {
+      throw new Error(`${errText(e2)}（/api/geo_svg：${errText(e)}）`)
+    }
+  }
+}
+
 export default worldMapApi
+
+// ═══════════════════════════════════════════════════════════════════
+// 新页面（worldmap/*）剩下的三处 HTTP 依赖：双通路收口
+//
+// 为什么**追加在文件末尾**、而不去改上面那些同名老函数：
+//   `renderProbeSvg` / `maplibList` / `maplibStats` / `maplibCleanup` 是**纯 HTTP** 的历史出口，
+//   浏览器预览（vite dev + 8791 调试服务）还在用它们，改掉会牵连那条已验证的路；
+//   所以这里按 `mapSvgUrl()` 的同一个模式补一组「自动分流」版本，让组件不感知底层：
+//     真壳（APK / 桌面）→ `invoke` Rust 本地命令，完全不依赖本地端口；
+//     浏览器 / 局域网调试 → 原样调老函数走 HTTP。
+//   每个分支都用 `isTauriRuntime()` **实时**判定（不读模块加载时的常量快照）。
+//
+// 参数名怎么定的：Rust 侧形参是 snake_case，Tauri 给 JS 侧转成 camelCase ——
+// 单词参数两侧同名（ad / style / mode / zoom / size / seed / charts / limit / sort / kind），
+// 多词参数 JS 必须写驼峰（`max_mb` → `maxMb`、`dry_run` → `dryRun`）。
+// 下面每个函数都把对应的 Rust 签名抄在注释里，改命令时对着核。
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 小区渲染（DistrictViz 页：数据 / 图层 / 伪 3D 共用的一张图），返回**裸 SVG 文本**。
+ *
+ * Tauri 侧命令（src-tauri/src/world_map/mod.rs）：
+ *   pub async fn world_map_render(
+ *     app: AppHandle,
+ *     layout: Option<Value>, key: Option<String>, area: Option<String>,
+ *     size: Option<i32>, seed: Option<u64>,
+ *     style: Option<String>, mode: Option<String>, zoom: Option<i32>,
+ *     charts: Option<bool>, animate: Option<bool>, layers: Option<bool>,
+ *     width: Option<f64>, height: Option<f64>, pad: Option<f64>,
+ *   ) -> Result<String, String>
+ * 返回的就是 SVG 文本，与 HTTP 版 `/api/render/probe` 同形（v-html 直接吃）。
+ *
+ * 取 layout 的优先级是 `layout` → `key` → `area`+`size`+`seed`：
+ * 这里三个都不给（与 HTTP 探针的默认行为一致，Rust 侧走 sketch 的默认区域），
+ * 只把「会影响画面」的 style / mode / zoom / size / seed / charts 传下去；
+ * `width`/`height`/`pad`/`animate`/`layers` 留给 Rust 默认值 —— 页面是靠 CSS
+ * （`.vz-stage :deep(svg) { max-width/height:100% }`）缩放的，传尺寸反而会两套排版。
+ *
+ * 失败一律 **throw**（空串 / 不是 SVG 也算失败）：调用方已有 `catch` → 顶部红条提示，
+ * 绝不让空串进 v-html 变成一片白。
+ */
+export async function districtRenderSvg(o: RenderProbeOpts = {}): Promise<string> {
+  // ── ② 浏览器 / 局域网调试：保持老通路（行为与改造前逐字节一致）──
+  if (!isTauriRuntime()) return renderProbeSvg(o)
+
+  // ── ① 真壳：Tauri 命令 ──
+  // 注意别传 `layout`/`key`/`area`：`layout: undefined` 会被 JSON 丢掉（等价于不传），
+  // 但显式传 null 在 Rust 侧是 `Some(Value::Null)` —— `normalize_layout` 认不出就会掉到
+  // 后面的分支，语义会变得难懂；干脆一个都不传。
+  const svg = await invoke<string>('world_map_render', {
+    style: o.style || 'gaode',
+    mode: o.mode || '2d',
+    zoom: o.zoom ?? 3,
+    charts: !!o.charts,
+    size: o.size,
+    seed: o.seed,
+  })
+  // 双保险：命令注册错/参数名写错时 invoke 会 reject，但万一哪天回了空串，
+  // 这里也要翻译成人话，而不是把 "" 塞进 v-html（页面会白）。
+  if (!svg || !String(svg).trimStart().startsWith('<')) {
+    throw new Error('world_map_render 没返回 SVG 文本（命令签名或参数可能对不上）')
+  }
+  return svg
+}
+
+/**
+ * 地图库列表（含容量统计）：真壳 invoke，浏览器 HTTP。
+ *
+ * Tauri 侧命令：
+ *   pub async fn world_map_maplib_list(
+ *     app: AppHandle, kind: Option<String>, ad: Option<String>,
+ *     limit: Option<usize>, sort: Option<String>,
+ *   ) -> Result<Value, String>          // 返回 { stats, entries }，与 /api/maplib/list 一致
+ *
+ * 空串过滤交给 Rust 侧（它自己做 `filter(|s| !s.trim().is_empty())`），
+ * 这里把 undefined 原样传：JSON 会丢掉 undefined 的键 → Rust 收到 None → 用默认值，
+ * 与 HTTP 版 `httpGet` 丢掉空参数的行为一致。
+ */
+export async function maplibListAuto(o: MapLibListOpts = {}): Promise<MapLibListPayload> {
+  if (!isTauriRuntime()) return maplibList(o)
+  return await invoke<MapLibListPayload>('world_map_maplib_list', {
+    kind: o.kind,
+    ad: o.ad,
+    limit: o.limit,
+    sort: o.sort,
+  })
+}
+
+/**
+ * 地图库容量统计：真壳 invoke，浏览器 HTTP。
+ *
+ * Tauri 侧命令：`pub async fn world_map_maplib_stats(app: AppHandle) -> Result<Value, String>`
+ * 返回 `{ count, bytes, mb, by_kind, max_bytes, max_mb }`（字段名与 HTTP 版一致）。
+ */
+export async function maplibStatsAuto(): Promise<MapLibStats> {
+  if (!isTauriRuntime()) return maplibStats()
+  return await invoke<MapLibStats>('world_map_maplib_stats')
+}
+
+/**
+ * 地图库容量清理（LRU）：真壳 invoke，浏览器 HTTP。
+ *
+ * Tauri 侧命令：
+ *   pub async fn world_map_maplib_cleanup(
+ *     app: AppHandle, max_mb: Option<f64>, dry_run: Option<bool>, dry: Option<bool>,
+ *   ) -> Result<Value, String>          // { removed, freed, freed_mb, dry_run, victims? }
+ *
+ * ⚠️ 干跑参数在 Rust 侧叫 `dry_run`，JS 侧必须写 **camelCase `dryRun`**。
+ * 写错成 `dry_run` 不会「变成真删」——Tauri 忽略不认识的键，Rust 侧 `dry_run` 收到 None，
+ * 于是走 `dry_run.or(dry).unwrap_or(true)` = **true**（干跑），属于失败安全；
+ * 但那样「真删」按钮会永远删不掉东西、又没人发现，所以这里**显式**把布尔传全，
+ * 绝不依赖「少传参数碰默认值」。语义对齐：本函数参数的 `dry: true` = 干跑。
+ */
+export async function maplibCleanupAuto(o: { maxMb?: number; dry: boolean }): Promise<MapLibCleanupResult> {
+  if (!isTauriRuntime()) return maplibCleanup(o)
+  return await invoke<MapLibCleanupResult>('world_map_maplib_cleanup', {
+    maxMb: o.maxMb,
+    dryRun: !!o.dry, // 只有调用方明写 dry:false 才会真删，与 HTTP 版纪律一致
+  })
+}

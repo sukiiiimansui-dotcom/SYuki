@@ -75,17 +75,23 @@
             <button class="po-mini" title="收起（等于关闭叠加层）" @click.stop="setMode('off')">×</button>
           </div>
 
-          <div class="po-map">
+          <div ref="mapBox" class="po-map">
             <img
               v-if="imgUrl"
               class="po-img"
               :src="imgUrl"
               alt=""
               :style="{ opacity: state.opacity }"
-              @error="imgErr = true"
+              @error="markImgErr('这张区域图的数据坏了，点「↻ 刷新」重试')"
             />
             <div v-if="imgErr || !imgUrl" class="po-maperr">
-              {{ imgErr ? '这张区域图还没生成好，点「↻ 刷新」重试' : '没有选中区域' }}
+              {{
+                imgErr
+                  ? imgErrMsg || '这张区域图还没生成好，点「↻ 刷新」重试'
+                  : imgLoading
+                    ? '区域图加载中…（首次较慢）'
+                    : '没有选中区域'
+              }}
             </div>
             <!-- 角色位置点：位置来自日程里的设施格子（和 WorldMap.vue 同一套算法） -->
             <div
@@ -145,7 +151,7 @@
 
     <div class="po-foot">
       <span class="po-meta">
-        {{ regionName || '未选区域' }} · 角色点 {{ roles.length }} 个 · 图源 /api/bigmap（{{ state.style }}）
+        {{ regionName || '未选区域' }} · 角色点 {{ roles.length }} 个 · 图源 {{ imgSource }}（{{ state.style }}）
       </span>
       <span class="po-spacer" />
       <span class="po-navtip">世界地图扩展</span>
@@ -158,9 +164,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import worldMapApi, { bigmapSvgUrl, type ScheduleRole } from '@/api/services/worldMap'
+import worldMapApi, {
+  isTauriRuntime,
+  MAP_SVG_DEFAULT_H,
+  MAP_SVG_DEFAULT_W,
+  mapSvgUrl,
+  type ScheduleRole,
+} from '@/api/services/worldMap'
 import { useWorldMapLayer } from '@/composables/useWorldMapLayer'
 
 const router = useRouter()
@@ -201,13 +213,84 @@ const pos = computed(() => {
 const posText = computed(() => (state.value.x < 0 ? '默认' : `${Math.round(state.value.x)},${Math.round(state.value.y)}`))
 const winStyle = computed(() => ({ left: pos.value.x + 'px', top: pos.value.y + 'px', width: WIN_W + 'px', height: WIN_H + 'px' }))
 const badgeStyle = computed(() => ({ left: pos.value.x + 'px', top: pos.value.y + 'px' }))
-const imgUrl = computed(() => {
-  // tick 只是个「刷新用」的计数器，让 <img> 能重新拉一次同一张图
-  if (!state.value.adcode) return ''
-  void tick.value
-  // 走 /api/bigmap（Rust 版没有 /api/bigmap_img，见服务层注释）
-  return bigmapSvgUrl(state.value.adcode, state.value.style, 1) + `&_t=${tick.value}`
-})
+const imgUrl = ref('')
+const imgErrMsg = ref('')
+/** 取图进行中：此时 imgUrl 还是空串，占位要显示「加载中」而不是「没有选中区域」（后者会误导） */
+const imgLoading = ref(false)
+
+// ── 区域图：双通路异步取 data URL ──
+//
+// 原来是 `computed` 直接拼 `/api/bigmap?...`（**纯 HTTP 地址**）：打包成 APK 后手机上
+// 没有 8791 那个本地服务，图片必然加载不出来 —— 这一页就只剩一个破图占位。
+// 现在统一走 `mapSvgUrl()`：真壳 `invoke('world_map_geo_svg')` 拿 SVG 转 data URL，
+// 浏览器仍走调试服务，两边都能出图。
+//
+// 尺寸按 WorldMapLayer.vue 的老规矩：量容器的**真实 CSS 像素**再喂给后端。
+// 悬浮窗只有 260×380，按默认的 1000×760 画完再缩下来，字会小成蚂蚁。
+const mapBox = ref<HTMLElement | null>(null)
+/** 请求序号：切区域/刷新会连发多个请求，只有最后发出的那个允许写回 */
+let imgSeq = 0
+/** 上一次真正发过请求的参数键：watch 与 loadAll() 都会触发取图，避免同参数连发两次 */
+let lastKey = ''
+
+/** 量容器：量不到（还没布局 / 已折叠 / 尺寸为 0）就用默认尺寸兜底 —— 宁可字小，也别空着 */
+function measureBox(): { w: number; h: number } {
+  const r = mapBox.value?.getBoundingClientRect()
+  const w = Math.round(r?.width || 0)
+  const h = Math.round(r?.height || 0)
+  if (w < 32 || h < 32) return { w: MAP_SVG_DEFAULT_W, h: MAP_SVG_DEFAULT_H }
+  return { w, h }
+}
+
+function markImgErr(msg = '') {
+  imgErr.value = true
+  imgErrMsg.value = msg
+}
+
+/**
+ * 取图。失败**不留白屏**：清掉 src + 把可读原因写进 imgErrMsg（模板里会显示出来），
+ * 同时 imgErr 保持 true，让「↻ 刷新」（tick++）能重新走一次。
+ */
+async function loadImg() {
+  const key = `${state.value.adcode}|${state.value.style}|${tick.value}|${collapsed.value ? 'c' : 'o'}`
+  if (!state.value.adcode) {
+    lastKey = key
+    imgUrl.value = ''
+    imgLoading.value = false
+    return
+  }
+  if (key === lastKey) return
+  lastKey = key
+  const seq = ++imgSeq
+  imgLoading.value = true
+  try {
+    const { w, h } = measureBox()
+    const url = await mapSvgUrl(state.value.adcode, state.value.style, w, h)
+    if (seq !== imgSeq) return // 已经有更新的请求了，这次结果作废
+    imgUrl.value = url
+    imgErr.value = false
+    imgErrMsg.value = ''
+  } catch (e) {
+    if (seq !== imgSeq) return
+    imgUrl.value = ''
+    markImgErr(`这张区域图没取到：${(e as Error)?.message || e}（点「↻ 刷新」重试）`)
+  } finally {
+    if (seq === imgSeq) imgLoading.value = false
+  }
+}
+
+/** 影响图的全部输入：区域 / 风格 / 刷新计数 / 折叠状态（折叠时容器不在，取回来也没处放） */
+watch(
+  () => [state.value.adcode, state.value.style, tick.value, collapsed.value] as const,
+  async () => {
+    await nextTick() // 展开角标后容器刚挂回去，等 DOM 更新完再量尺寸
+    if (collapsed.value) return
+    void loadImg()
+  },
+)
+
+/** 图源文案：真壳是 Rust 本地渲染（APK 里没有 HTTP 服务），浏览器才是 /api/bigmap */
+const imgSource = computed(() => (isTauriRuntime() ? 'Rust 本地渲染' : '/api/bigmap'))
 
 /**
  * 角色点坐标：与 WorldMap.vue 的 actorDots 同一套规则 ——
@@ -319,7 +402,12 @@ async function loadAll(manual = false) {
   } catch {
     rawRoles.value = []
   }
+  // ③ 区域图：等 DOM 稳定后按容器真实尺寸取。
+  //    （setRegion 改了 adcode 时上面的 watch 也会触发，同一份参数由 loadImg 内部的
+  //      lastKey 去重，所以这里补一枪不会变成两次请求。）
   loading.value = false
+  await nextTick()
+  if (!collapsed.value) void loadImg()
 }
 
 function go(path: string) {

@@ -2,7 +2,7 @@
   <!-- 世界地图叠加层（T6-2）：既是半透明背景层，也能缩成角落小窗 -->
   <template v-if="mode !== 'off'">
     <!-- ① 背景层：铺满、半透明、不吃鼠标事件 -->
-    <div v-if="mode === 'overlay'" class="wml-overlay" :style="{ opacity }">
+    <div v-if="mode === 'overlay'" ref="overlayBox" class="wml-overlay" :style="{ opacity }">
       <img v-if="img" class="wml-img" :src="img" alt="" @error="onErr" />
       <div class="wml-veil" />
       <div v-if="loading" class="wml-hint">世界地图加载中…</div>
@@ -24,7 +24,7 @@
           <button class="wml-op" title="关闭" @click="setMode('off')">✕</button>
         </div>
       </div>
-      <div class="wml-body">
+      <div ref="bodyBox" class="wml-body">
         <img v-if="img" class="wml-img2" :src="img" alt="" @error="onErr" />
         <div v-if="loading" class="wml-hint sm">加载中…</div>
       </div>
@@ -38,10 +38,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useWorldMapLayer } from '@/composables/useWorldMapLayer'
-import worldMapApi, { type RemoteBlock, type ScheduleRole } from '@/api/services/worldMap'
+import worldMapApi, {
+  MAP_SVG_DEFAULT_H,
+  MAP_SVG_DEFAULT_W,
+  mapSvgUrl,
+  type RemoteBlock,
+  type ScheduleRole,
+} from '@/api/services/worldMap'
 import { bindWorldData } from '@/composables/useWorldMapBindings'
 
 const router = useRouter()
@@ -58,9 +64,138 @@ const roles = ref<ScheduleRole[]>([])
 const nowText = ref('')
 const adcode = ref('')
 
-const img = computed(() => {
-  if (imgErr.value || !adcode.value) return ''
-  return `${worldMapApi.apiBase}/api/bigmap?ad=${adcode.value}&style=${state.value.style}&scale=1&_t=${tick.value}`
+// ── 图层图片：异步取 data URL ──
+//
+// 原来是 `computed` 直接拼 `http://127.0.0.1:8791/api/bigmap?...`；
+// 打包成 APK 后没有这个 HTTP 服务，图片必然加载不出来（叠加层就只剩一层灰色纱罩）。
+// 现在统一走 mapSvgUrl()：真壳 invoke Rust 命令，浏览器走调试服务 —— 两边都能出图。
+const img = ref('')
+/** 叠加层 / 角落小窗的**真实 CSS 像素**尺寸（喂给后端渲染，手机上的字才看得清） */
+const boxSize = ref({ w: 0, h: 0 })
+const overlayBox = ref<HTMLElement | null>(null)
+const bodyBox = ref<HTMLElement | null>(null)
+
+/** 请求序号：切模式/改尺寸会连发多个请求，只有最后发出的那个允许写回 */
+let imgSeq = 0
+
+/** 当前模式下真正承载图片的那个盒子（两个分支是 v-if/v-else，同时只存在一个） */
+function currentBox(): HTMLElement | null {
+  return mode.value === 'overlay' ? overlayBox.value : bodyBox.value
+}
+
+/**
+ * 取图层图。失败保持静默（叠加层是聊天界面的背景，不该弹错误打扰用户），
+ * 只把 src 置空避免显示破图；imgErr 由 loadRegion() 负责复位。
+ */
+async function loadImg(useDefaultSize = false) {
+  if (imgErr.value || !adcode.value) {
+    img.value = ''
+    return
+  }
+  let w = boxSize.value.w
+  let h = boxSize.value.h
+  if (w <= 0 || h <= 0) {
+    if (!useDefaultSize) return // 还没量到尺寸：等 ResizeObserver
+    w = MAP_SVG_DEFAULT_W
+    h = MAP_SVG_DEFAULT_H
+  }
+  const seq = ++imgSeq
+  try {
+    const url = await mapSvgUrl(adcode.value, state.value.style, w, h)
+    if (seq === imgSeq) img.value = url
+  } catch {
+    if (seq !== imgSeq) return
+    img.value = ''
+    imgErr.value = true
+  }
+}
+
+/**
+ * 影响图片的全部输入：区域 / 风格 / 模式（决定盒子尺寸）/ 刷新计数 / 盒子尺寸 / 错误标记。
+ * 把 `imgErr` 也算进来，是为了保留原来的语义：loadRegion() 复位 imgErr 后图片会再试一次
+ * （它一变成 true 就只触发一次「空转」，不会自旋）。
+ */
+const imgKey = computed(
+  () =>
+    `${adcode.value}|${state.value.style}|${mode.value}|${tick.value}|${boxSize.value.w}x${boxSize.value.h}|${
+      imgErr.value ? 'e' : 'k'
+    }`,
+)
+watch(imgKey, () => {
+  void loadImg()
+})
+
+// ── 盒子尺寸监听（模式切换会换元素，必须重新 observe）──
+let boxRo: ResizeObserver | null = null
+let boxTimer: number | null = null
+let fallbackTimer: number | null = null
+let boxRoFired = false
+
+function measureBox() {
+  const el = currentBox()
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const w = Math.round(r.width)
+  const h = Math.round(r.height)
+  const cur = boxSize.value
+  // 抖动过滤：变化不到 8px 不重画（拖窗口/转屏时 ResizeObserver 会连发几十次）
+  if (Math.abs(w - cur.w) < 8 && Math.abs(h - cur.h) < 8) return
+  boxSize.value = { w, h }
+}
+
+function detachBoxObserver() {
+  if (boxTimer !== null) {
+    window.clearTimeout(boxTimer)
+    boxTimer = null
+  }
+  // 兜底计时器也要清：叠加层都关掉了就别再发这一枪
+  if (fallbackTimer !== null) {
+    window.clearTimeout(fallbackTimer)
+    fallbackTimer = null
+  }
+  window.removeEventListener('resize', measureBox)
+  boxRo?.disconnect()
+  boxRo = null
+  boxRoFired = false
+}
+
+/** 兜底：尺寸一直量不到（老 WebView 的 RO 不回调 / 元素被隐藏）也要出图 —— 宁可字小，也别空着 */
+function armSizeFallback() {
+  if (fallbackTimer !== null) return
+  fallbackTimer = window.setTimeout(() => {
+    fallbackTimer = null
+    if (boxSize.value.w <= 0) void loadImg(true)
+  }, 1500)
+}
+
+function attachBoxObserver() {
+  detachBoxObserver()
+  const el = currentBox()
+  if (!el) return
+  armSizeFallback() // 每次（重新）挂监听都重新武装：切模式会 detach 掉上一个
+  if (typeof ResizeObserver === 'undefined') {
+    // 老 WebView（Chromium < 64）没有 ResizeObserver：退回「量一次 + 监听 window.resize」
+    measureBox()
+    window.addEventListener('resize', measureBox)
+    return
+  }
+  boxRo = new ResizeObserver(() => {
+    // 首次回调 = 布局就绪，立刻量；之后（拖拽/转屏连发）才走防抖
+    if (!boxRoFired) {
+      boxRoFired = true
+      measureBox()
+      return
+    }
+    if (boxTimer !== null) window.clearTimeout(boxTimer)
+    boxTimer = window.setTimeout(measureBox, 220)
+  })
+  boxRo.observe(el)
+}
+
+// 叠加层 ↔ 角落小窗 切换时 DOM 元素换了，监听目标要跟着换（等 DOM 更新完再挂）
+watch(mode, async () => {
+  await nextTick()
+  attachBoxObserver()
 })
 
 const cornerStyle = computed(() => {
@@ -156,6 +291,8 @@ onBeforeUnmount(endDrag)
 
 let refreshTimer: number | null = null
 onMounted(async () => {
+  // 先挂尺寸监听（首次回调给真实尺寸），再去拿区域数据 —— 数据一到就能按正确尺寸出图
+  attachBoxObserver()
   try {
     await bindWorldData()
   } catch {
@@ -172,6 +309,7 @@ onMounted(async () => {
   }, 5 * 60 * 1000)
 })
 onBeforeUnmount(() => {
+  detachBoxObserver()
   if (refreshTimer !== null) window.clearInterval(refreshTimer)
 })
 </script>
