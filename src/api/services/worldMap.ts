@@ -1074,3 +1074,74 @@ export async function maplibCleanupAuto(o: { maxMb?: number; dry: boolean }): Pr
     dryRun: !!o.dry, // 只有调用方明写 dry:false 才会真删，与 HTTP 版纪律一致
   })
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// 「世界模拟」首屏要的是**裸 SVG 文本**，不是 data URL —— 所以这里补一个 geoSvgText()
+//
+// 为什么不能直接用上面的 `mapSvgUrl()`：
+//   那个函数把 SVG 转成 data URL 就返回了，**文本就丢了**；而首屏需要从文本里读到
+//   `render_geo` 写在每个区划上的 `<g class="geo-region" data-adcode data-name>`，
+//   用它来：① 知道这张图上有哪些省/市/区县（三级联动列表的数据源，不必另开接口）；
+//          ② 判断定位命中的那个省在图上的哪一块（高亮）。
+//   一个请求同时拿到「图」和「图上的区划索引」，比再调一次接口省一次往返。
+//
+// 与 `mapSvgUrl()` 一样是**双通路**：真壳 invoke Rust 命令（不需要任何本地端口），
+// 浏览器走调试服务的孪生路由 `/api/geo_svg`（8791 Rust 服务与 8790 Python 侧车都有这条，
+// 都认 w/h/zoom，所以预览与真机排版一致）。
+//
+// 尺寸仍然必须跟着容器走（理由见 `mapSvgUrl` 上方那段）：字号是固定 px，
+// 容器尺寸传下去画布与显示 1:1，手机上字才看得清。
+// 另外尺寸还有个副作用是**好事**：抽稀容差是 0.6px，画布越小保留的顶点越少，
+// 手机上返回的 SVG 反而更小（全国那张 1000×760 实测 695KB，见交付说明）。
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 取行政区划 SVG 的**裸文本**（全国 `100000` / 省 / 市 / 区县）。
+ *
+ * Tauri 侧命令（src-tauri/src/world_map/mod.rs，已逐字核对）：
+ *   pub async fn world_map_geo_svg(
+ *     app: AppHandle, ad: Option<String>, style: Option<String>,
+ *     width: Option<f64>, height: Option<f64>, pad: Option<f64>,
+ *     zoom: Option<i32>, labels: Option<bool>, dots: Option<bool>, stats: Option<bool>,
+ *   ) -> Result<String, String>
+ * 形参都是单词，JS 侧原样传即可（`world_map_geo_svg` 一条命令就够，
+ * pad/labels/dots/stats 留给 Rust 默认值）。
+ *
+ * @param ad    行政区划 adcode（空值按全国处理）
+ * @param style gaode / dark / water（三套主题仍由 Rust 渲染器决定，外壳不干预）
+ * @param w     容器实际 CSS 像素宽
+ * @param h     容器实际 CSS 像素高
+ * @param zoom  1=只留主轮廓（省界/市界），2=多一层内阴影，3=全
+ *
+ * 失败一律 **throw**（空串、不是 SVG 都算失败）：调用方已有 catch → 页面提示 + 重试，
+ * 绝不把 JSON 塞进 v-html 变成一屏乱码、也不让页面卡在「加载中…」。
+ */
+export async function geoSvgText(
+  ad: string,
+  style = 'gaode',
+  w: number = MAP_SVG_DEFAULT_W,
+  h: number = MAP_SVG_DEFAULT_H,
+  zoom = 2,
+): Promise<string> {
+  const code = String(ad || '').trim() || '100000'
+  const width = Math.max(64, Math.round(Number(w) || MAP_SVG_DEFAULT_W))
+  const height = Math.max(64, Math.round(Number(h) || MAP_SVG_DEFAULT_H))
+  const z = Math.min(3, Math.max(1, Math.round(Number(zoom) || 2)))
+
+  // ── ① 真壳：Tauri 命令（本地渲染，离线可用，只要有 geojson 缓存）──
+  if (isTauriRuntime()) {
+    const svg = await invoke<string>('world_map_geo_svg', { ad: code, style, width, height, zoom: z })
+    const text = String(svg || '')
+    if (!/<svg[\s>]/i.test(text.slice(0, 400))) {
+      throw new Error(`world_map_geo_svg 没返回 SVG（ad=${code}）`)
+    }
+    return text
+  }
+
+  // ── ② 浏览器 / 局域网调试：/api/geo_svg ──
+  // 这条路由**不认 zoom 之外的东西**也一样能用；出错时 fetchSvgText 会把 JSON 翻译成人话。
+  const url =
+    `${API_BASE}/api/geo_svg?ad=${encodeURIComponent(code)}` +
+    `&style=${encodeURIComponent(style)}&w=${width}&h=${height}&zoom=${z}`
+  return await fetchSvgText(url)
+}

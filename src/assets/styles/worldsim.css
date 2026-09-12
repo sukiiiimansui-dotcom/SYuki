@@ -1,0 +1,589 @@
+/* ============================================================================
+ * 「世界模拟」外壳皮肤（小清新）—— 主题变量 + 动画
+ *
+ * 为什么单独一个全局 css 文件、而不是写在组件的 scoped style 里：
+ *   ① 后面 P2~P5 还会加侧边栏 / 面板 / 事件气泡等一堆页面，皮肤必须**一处改、处处生效**；
+ *   ② 图标/动画关键帧是跨组件复用的（加载动画在引导、切换、AI 绘制三处都用）；
+ *   ③ 主题切换靠**换容器上的 class**（.theme-mint / .theme-glass），
+ *      组件样式只写变量名，绝不写两套样式 —— 这条是机主明确要求的。
+ *
+ * 规矩（避免污染 LingChat 原本的界面）：
+ *   · 所有变量都挂在 `.ws-root` 下，**不写 `:root`** —— 别处读不到、也不会被别处覆写；
+ *   · 所有全局类名一律 `ws-` 前缀，关键帧一律 `ws-` 前缀；
+ *   · 地图本体（高德/暗色/水系三套）仍由 Rust 渲染器决定，这里只负责「外壳」。
+ *
+ * 两套主题（机主看过预览后定的：保留第 1 套 + 第 3 套，砍掉日系手绘那套）：
+ *   .theme-mint  薄荷奶油 —— **默认亮色**：薄荷绿 #8fd6c0 / 奶油白 #fdfbf6 /
+ *                雾蓝 #a8c8e8 / 暖灰文字 #4a5b63，圆角 14~18px，轻阴影
+ *   .theme-glass 现代简约·毛玻璃 —— 可选：低饱和蓝紫 #9aa6e8 / 底 #eef1f8 /
+ *                文字 #3c4560 / 自己头像点 #f0a6b8，圆角 18px，
+ *                卡片 backdrop-filter: blur(10px) + 半透明白
+ *   （第三套「暖木/纸纹」**不实现**，代码里也不留残留。）
+ *
+ * 深色模式：JS 在根节点上打两个类之一（见 useWorldSimGeo.ts 的 useWorldSimTheme）
+ *   · .ws-dark      —— 明确的深色（用户选择 / LingChat 主题说是深色）
+ *   · .ws-sys-dark  —— 跟随系统 prefers-color-scheme: dark
+ *   两者的变量值完全一样，所以选择器写成**同一个规则的两段**，不复制第二份值。
+ *
+ * 降级：
+ *   · .ws-perf-low（低端机 / 性能档位低）→ 关毛玻璃、关阴影、动画减半
+ *   · prefers-reduced-motion: reduce → 动画时长归零（只留淡入）
+ *   · @supports not (backdrop-filter: blur(1px)) → 毛玻璃退化成纯色卡片
+ * ========================================================================== */
+
+/* ── 主题一：薄荷奶油（默认亮色）──────────────────────────────────────────── */
+.ws-root.theme-mint {
+  --ws-bg: #fdfbf6;            /* 奶油白 */
+  --ws-bg-2: #f2f8f5;          /* 次级底：极浅薄荷 */
+  --ws-panel: rgba(255, 255, 255, 0.86);
+  --ws-panel-2: rgba(255, 255, 255, 0.62);
+  --ws-border: rgba(143, 214, 192, 0.38);
+  --ws-fg: #4a5b63;            /* 暖灰文字 */
+  --ws-fg-dim: #7d8f96;
+  --ws-primary: #8fd6c0;       /* 薄荷绿 */
+  --ws-primary-deep: #62b79d;
+  --ws-primary-soft: rgba(143, 214, 192, 0.18);
+  --ws-on-primary: #17332c;
+  --ws-accent: #a8c8e8;        /* 雾蓝 */
+  --ws-accent-2: #f0a6b8;      /* 自己头像点（两套主题都有，玻璃套是主色） */
+  --ws-radius: 16px;
+  --ws-radius-sm: 14px;
+  --ws-radius-lg: 18px;
+  --ws-shadow: 0 4px 14px rgba(90, 120, 130, 0.10);
+  --ws-shadow-lg: 0 10px 30px rgba(90, 120, 130, 0.16);
+  --ws-blur: 0px;              /* 薄荷套不要毛玻璃 */
+  --ws-hl: #8fd6c0;            /* 地图上「命中区域」的高亮色 */
+  --ws-hl-line: #3f9e83;
+  --ws-ok: #6cc39a;
+  --ws-warn: #e8b86d;
+  --ws-err: #e08d8d;
+  --ws-stage-bg: #eef4f1;
+}
+
+/* ── 主题二：现代简约·毛玻璃 ─────────────────────────────────────────────── */
+.ws-root.theme-glass {
+  --ws-bg: #eef1f8;
+  --ws-bg-2: #e6ebf6;
+  --ws-panel: rgba(255, 255, 255, 0.62);
+  --ws-panel-2: rgba(255, 255, 255, 0.42);
+  --ws-border: rgba(154, 166, 232, 0.32);
+  --ws-fg: #3c4560;
+  --ws-fg-dim: #6f7896;
+  --ws-primary: #9aa6e8;       /* 低饱和蓝紫 */
+  --ws-primary-deep: #7b88d8;
+  --ws-primary-soft: rgba(154, 166, 232, 0.20);
+  --ws-on-primary: #232a45;
+  --ws-accent: #b8c2f0;
+  --ws-accent-2: #f0a6b8;
+  --ws-radius: 18px;
+  --ws-radius-sm: 14px;
+  --ws-radius-lg: 18px;
+  --ws-shadow: 0 6px 18px rgba(80, 92, 140, 0.10);
+  --ws-shadow-lg: 0 12px 34px rgba(80, 92, 140, 0.18);
+  --ws-blur: 10px;             /* 卡片毛玻璃 */
+  --ws-hl: #9aa6e8;
+  --ws-hl-line: #6a78d0;
+  --ws-ok: #7fc7a4;
+  --ws-warn: #e6bb78;
+  --ws-err: #e393a0;
+  --ws-stage-bg: #e9edf7;
+}
+
+/* ── 深色（两套主题各出一版，同一色系压低明度）───────────────────────────── */
+.ws-root.theme-mint.ws-dark,
+.ws-root.theme-mint.ws-sys-dark {
+  --ws-bg: #0f1a1b;            /* 低饱和深青底 */
+  --ws-bg-2: #132224;
+  --ws-panel: rgba(24, 40, 41, 0.82);
+  --ws-panel-2: rgba(28, 46, 47, 0.58);
+  --ws-border: rgba(143, 214, 192, 0.22);
+  --ws-fg: #d9ebe6;
+  --ws-fg-dim: #8ba7a3;
+  --ws-primary: #7fd0b8;       /* 亮薄荷点缀 */
+  --ws-primary-deep: #4fae94;
+  --ws-primary-soft: rgba(127, 208, 184, 0.16);
+  --ws-on-primary: #0c1a18;
+  --ws-accent: #7fa6cf;
+  --ws-accent-2: #f0a6b8;
+  --ws-shadow: 0 4px 14px rgba(0, 0, 0, 0.36);
+  --ws-shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.46);
+  --ws-hl: #7fd0b8;
+  --ws-hl-line: #b9f0e0;
+  --ws-ok: #6cc39a;
+  --ws-warn: #d8ad6a;
+  --ws-err: #d98b8b;
+  --ws-stage-bg: #101f21;
+}
+
+.ws-root.theme-glass.ws-dark,
+.ws-root.theme-glass.ws-sys-dark {
+  --ws-bg: #14172a;            /* 玻璃套直接加深底色 */
+  --ws-bg-2: #181c33;
+  --ws-panel: rgba(30, 34, 56, 0.62);
+  --ws-panel-2: rgba(36, 41, 66, 0.42);
+  --ws-border: rgba(154, 166, 232, 0.24);
+  --ws-fg: #dfe3f5;
+  --ws-fg-dim: #98a0c0;
+  --ws-primary: #a7b1f0;
+  --ws-primary-deep: #7f8ce0;
+  --ws-primary-soft: rgba(167, 177, 240, 0.18);
+  --ws-on-primary: #171a2e;
+  --ws-accent: #8f9be0;
+  --ws-accent-2: #f0a6b8;
+  --ws-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
+  --ws-shadow-lg: 0 14px 36px rgba(0, 0, 0, 0.5);
+  --ws-hl: #a7b1f0;
+  --ws-hl-line: #dfe3ff;
+  --ws-stage-bg: #171a2b;
+}
+
+/* ============================================================================
+ * 根容器：等比缩放（机主要求「手机像在浏览桌面版」——同一套 UI，只缩字号）
+ *
+ * 做法：根节点只定义一个「基准字号」变量 --ws-fs，内部全部用 em / clamp()。
+ *   · 窄屏（手机 360px）→ 约 12.2px；桌面 1400px → 封顶 15px（≈ 手机的 1.23 倍）
+ *   · 控件尺寸跟着 em 走，视觉上就是整体等比缩小，而不是换一套小号布局
+ * 不写第二套布局：所有响应式差异只体现在这个变量和少数 clamp() 上。
+ * ========================================================================== */
+.ws-root {
+  /* 手机 360px ≈ 12.2px，桌面 ≥1400px 封顶 15px（≈ 手机的 1.23 倍）。
+     取 12.2 而不是更小：中文小字低于 12px 在手机屏上开始难认，
+     「像浏览桌面版」要的是**布局不变**，不是把字缩到看不清。 */
+  --ws-fs: clamp(12.2px, 0.45vw + 10.6px, 15px);
+  /* 与既有的地图整页 WorldMap.vue 用同一套定位（position: fixed + inset:0 + 高 z-index），
+     这样「整页路由」在全屏 WebView 里怎么表现，两个页面是一致的。
+     层级对照（机主给的层叠表 + 本仓库实测）：
+       背景 -2 ／ 立绘 1 ／ 地图叠加背景层 1（pointer-events:none）／ 本页 50
+       ／ 地图角落小窗 60 ／ 主菜单 1000 ／ 悬浮窗 9998+ ／ 全局弹窗 10000
+     注意**不要**把地图叠加层做成 < 1 —— 那是叠加背景层的事；本页是整页路由，
+     必须盖住它，否则聊天时开着「地图当背景」的人进来会看到两层地图打架。 */
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  font-size: var(--ws-fs);
+  line-height: 1.5;
+  color: var(--ws-fg);
+  background:
+    radial-gradient(120% 80% at 12% 0%, var(--ws-bg-2) 0%, transparent 60%),
+    radial-gradient(100% 70% at 100% 100%, var(--ws-primary-soft) 0%, transparent 55%),
+    var(--ws-bg);
+  overflow: hidden;
+  /* 主题切换时有一点过渡，不至于“啪”地跳一下 */
+  transition: background-color 0.35s ease, color 0.35s ease;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 低端机 / 性能档位低：关毛玻璃与阴影，动画变轻（.ws-perf-low 由 JS 打上） */
+.ws-root.ws-perf-low {
+  --ws-blur: 0px;
+  --ws-shadow: none;
+  --ws-shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.ws-root.ws-perf-low .ws-anim {
+  animation-duration: 0.9s;
+}
+
+/* 老 WebView 不支持 backdrop-filter：毛玻璃退化成纯色卡片，可读性优先 */
+@supports not (backdrop-filter: blur(1px)) {
+  .ws-root {
+    --ws-blur: 0px;
+  }
+  .ws-root.theme-glass {
+    --ws-panel: rgba(255, 255, 255, 0.94);
+    --ws-panel-2: rgba(255, 255, 255, 0.82);
+  }
+  .ws-root.theme-glass.ws-dark,
+  .ws-root.theme-glass.ws-sys-dark {
+    --ws-panel: rgba(30, 34, 56, 0.96);
+    --ws-panel-2: rgba(36, 41, 66, 0.88);
+  }
+}
+
+/* 系统设置「减少动态效果」：只留淡入，别让晕动症用户难受 */
+@media (prefers-reduced-motion: reduce) {
+  .ws-root *,
+  .ws-root *::before,
+  .ws-root *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.12s !important;
+  }
+}
+
+/* ── 通用零件 ────────────────────────────────────────────────────────────── */
+.ws-card {
+  background: var(--ws-panel);
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius);
+  box-shadow: var(--ws-shadow);
+  backdrop-filter: blur(var(--ws-blur));
+  -webkit-backdrop-filter: blur(var(--ws-blur));
+}
+
+.ws-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.42em 0.95em;
+  font: inherit;
+  color: var(--ws-fg);
+  background: var(--ws-panel-2);
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius-sm);
+  cursor: pointer;
+  transition: transform 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
+  backdrop-filter: blur(var(--ws-blur));
+  -webkit-backdrop-filter: blur(var(--ws-blur));
+}
+.ws-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--ws-shadow);
+}
+.ws-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+.ws-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ws-btn--primary {
+  color: var(--ws-on-primary);
+  background: var(--ws-primary);
+  border-color: transparent;
+  font-weight: 600;
+}
+.ws-btn--ghost {
+  background: transparent;
+}
+
+.ws-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.1em 0.6em;
+  font-size: 0.86em;
+  color: var(--ws-fg-dim);
+  background: var(--ws-primary-soft);
+  border-radius: 999px;
+}
+
+/* ============================================================================
+ * 加载动画（纯 CSS / SVG，不引第三方库）
+ * 覆盖机主要求的四处：初始化 / 定位中 / 地图加载与区域切换 / AI 绘制中
+ * ========================================================================== */
+
+.ws-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9em;
+  padding: 1.4em;
+  text-align: center;
+  color: var(--ws-fg-dim);
+}
+.ws-loading__text {
+  font-size: 1em;
+  letter-spacing: 0.06em;
+  color: var(--ws-fg);
+}
+.ws-loading__sub {
+  font-size: 0.82em;
+  color: var(--ws-fg-dim);
+  min-height: 1.2em;
+}
+.ws-loading--inline {
+  flex-direction: row;
+  gap: 0.6em;
+  padding: 0.2em 0;
+  text-align: left;
+}
+.ws-loading--sm .ws-loading__art {
+  width: 2.2em;
+  height: 2.2em;
+}
+.ws-loading__art {
+  width: 5.4em;
+  height: 5.4em;
+  display: block;
+}
+/* 「正在展开世界…」做一次淡入，别让首屏硬切 */
+.ws-loading--enter {
+  animation: ws-fade-up 0.42s ease both;
+}
+/* 文案末尾的小省略号呼吸 */
+.ws-dots::after {
+  content: '';
+  animation: ws-dots 1.4s steps(4, end) infinite;
+}
+
+/* ── 关键帧：全部 ws- 前缀，避免和 LingChat 原本的动画撞名 ── */
+@keyframes ws-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes ws-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes ws-dots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+}
+/* 初始化：外圈缓慢旋转 + 内圈反向，像在展开一张地图 */
+@keyframes ws-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes ws-spin-rev {
+  to { transform: rotate(-360deg); }
+}
+/* 定位：雷达脉冲 */
+@keyframes ws-radar {
+  0%   { transform: scale(0.25); opacity: 0.85; }
+  80%  { transform: scale(1); opacity: 0; }
+  100% { transform: scale(1); opacity: 0; }
+}
+/* 地图加载 / 区域切换：等高线一圈圈扩开 */
+@keyframes ws-ring {
+  0%   { transform: scale(0.35); opacity: 0; }
+  35%  { opacity: 0.9; }
+  100% { transform: scale(1.05); opacity: 0; }
+}
+/* AI 绘制：画笔描边（stroke-dashoffset 走一遍） */
+@keyframes ws-draw {
+  0%   { stroke-dashoffset: 120; }
+  60%  { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; opacity: 0.35; }
+}
+/* 进度条流光 */
+@keyframes ws-shimmer {
+  0%   { background-position: -120% 0; }
+  100% { background-position: 220% 0; }
+}
+/* 新画的建筑「弹」出来（AI 增量绘制用） */
+@keyframes ws-pop {
+  0%   { opacity: 0; transform: translateY(2px) scale(0.86); }
+  100% { opacity: 1; transform: none; }
+}
+/* 命中的省份高亮：呼吸光晕 */
+@keyframes ws-breathe {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+/* 漂浮（空态插画） */
+@keyframes ws-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+
+.ws-anim-spin { animation: ws-spin 9s linear infinite; transform-origin: 50% 50%; }
+.ws-anim-spin-rev { animation: ws-spin-rev 6s linear infinite; transform-origin: 50% 50%; }
+.ws-anim-radar { animation: ws-radar 2.1s ease-out infinite; transform-origin: 50% 50%; }
+.ws-anim-ring { animation: ws-ring 2.4s ease-out infinite; transform-origin: 50% 50%; }
+.ws-anim-breathe { animation: ws-breathe 2.2s ease-in-out infinite; }
+.ws-anim-float { animation: ws-float 3.2s ease-in-out infinite; }
+/* AI 绘制：一支笔把线描出来（dasharray/dashoffset 那套老办法，WebView 全兼容） */
+.ws-anim-draw {
+  stroke-dasharray: 120;
+  animation: ws-draw 2.6s ease-in-out infinite;
+}
+
+.ws-skeleton {
+  height: 0.7em;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--ws-primary-soft) 0%,
+    var(--ws-panel-2) 45%,
+    var(--ws-primary-soft) 90%
+  );
+  background-size: 220% 100%;
+  animation: ws-shimmer 1.6s linear infinite;
+}
+
+/* ============================================================================
+ * 行政区划 SVG（后端 render_geo 画的那张）在页面里的样式
+ *
+ * 注意：这张图是 v-html 注进来的**真 DOM**（不是 <img>），因为要能点、要高亮。
+ * 注入前会剥掉 SVG 自带的 <style>（否则那些全局类名会漏到整个应用），
+ * 所以下面用 :deep() 把该有的样式补回来 —— 只作用于本页的 .ws-geo。
+ * ========================================================================== */
+.ws-geo {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.ws-geo :deep(svg) {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* 换级时整张图淡入：区域切换的“呼吸感” */
+  animation: ws-fade-in 0.34s ease both;
+}
+.ws-geo :deep(.geo-region) {
+  cursor: pointer;
+}
+.ws-geo :deep(.geo-fill) {
+  transition: fill 0.18s ease, filter 0.18s ease;
+}
+.ws-geo :deep(.geo-region:hover .geo-fill) {
+  filter: brightness(1.06) saturate(1.12);
+}
+/* 命中（定位到的）区划：高亮 + 呼吸描边。用类名切换，不用改 SVG 文本 */
+.ws-geo :deep(.geo-region.ws-on .geo-fill) {
+  fill: var(--ws-hl);
+  fill-opacity: 0.92;
+  stroke: var(--ws-hl-line);
+  stroke-width: 2.4;
+}
+.ws-geo :deep(.geo-region.ws-on .geo-border) {
+  stroke: var(--ws-hl-line);
+  stroke-width: 2;
+}
+.ws-geo :deep(.geo-region.ws-on) {
+  animation: ws-breathe 2.4s ease-in-out infinite;
+}
+/* 按 zoom 分层显示：这两条是**从 SVG 自带 CSS 里搬出来的**（注入前我们把那段
+ * <style> 剥掉了，否则它会漏成全局样式）。原规则是 `svg[data-zoom="1"] .z2{display:none}`：
+ *   z1 远景（底色/边界/地名）、z2 中景（内阴影）、z3 近景 —— zoom 越小留的层越少。
+ * 搬过来之后作用域是「本页的 .ws-geo」，既保留分层，又不会污染别处。 */
+.ws-geo :deep(svg[data-zoom="1"] .z2),
+.ws-geo :deep(svg[data-zoom="1"] .z3) {
+  display: none;
+}
+.ws-geo :deep(svg[data-zoom="2"] .z3) {
+  display: none;
+}
+
+/* 选中的（用户点的）那一个：实心主色，跟“命中”区分开 */
+.ws-geo :deep(.geo-region.ws-pick .geo-fill) {
+  fill: var(--ws-primary);
+  stroke: var(--ws-hl-line);
+  stroke-width: 2.6;
+}
+.ws-root.ws-perf-low .ws-geo :deep(.geo-region.ws-on) {
+  animation: none;
+  opacity: 1;
+}
+
+/* ============================================================================
+ * 小区阶段：草图 → AI 精绘 的交叉淡入
+ * ========================================================================== */
+.ws-neigh {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--ws-radius);
+  overflow: hidden;
+  background: var(--ws-stage-bg);
+}
+.ws-neigh__layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.5s ease;
+}
+.ws-paint-host {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ws-neigh__layer img,
+.ws-neigh__layer svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+/* 正在被替换掉的草图：淡出 */
+.ws-neigh__layer.is-out {
+  opacity: 0;
+}
+/* AI 层：一开始透明，第一条要素到了再淡入 */
+.ws-neigh__ai {
+  opacity: 0;
+}
+.ws-neigh__ai.is-in {
+  opacity: 1;
+}
+/* AI 刚画上去的建筑/道路：轻微弹出 */
+.ws-neigh__ai svg .ws-b,
+.ws-neigh__ai svg .ws-t {
+  animation: ws-pop 0.34s ease both;
+}
+
+/* ── 小零件：进度卡、提示条、错误条 ─────────────────────────────────────── */
+.ws-prog {
+  position: absolute;
+  right: 0.8em;
+  top: 0.8em;
+  min-width: 11em;
+  padding: 0.6em 0.8em;
+  font-size: 0.86em;
+  animation: ws-fade-up 0.3s ease both;
+}
+.ws-prog__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+}
+.ws-prog__bar {
+  height: 0.28em;
+  margin-top: 0.5em;
+  border-radius: 999px;
+  background: var(--ws-primary-soft);
+  overflow: hidden;
+}
+.ws-prog__bar i {
+  display: block;
+  height: 100%;
+  background: var(--ws-primary);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.ws-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.5em 0.8em;
+  font-size: 0.86em;
+  border-radius: var(--ws-radius-sm);
+  background: var(--ws-primary-soft);
+  color: var(--ws-fg);
+}
+.ws-note--warn {
+  background: color-mix(in srgb, var(--ws-warn) 22%, transparent);
+}
+.ws-note--err {
+  background: color-mix(in srgb, var(--ws-err) 22%, transparent);
+}
+/* color-mix 在很老的 WebView 上没有 → 退回半透明底色，别让提示条变成透明看不见 */
+@supports not (background: color-mix(in srgb, red 10%, transparent)) {
+  .ws-note--warn { background: rgba(232, 184, 109, 0.22); }
+  .ws-note--err { background: rgba(224, 141, 141, 0.22); }
+}
+
+/* ── 滚动条（列表用）────────────────────────────────────────────────────── */
+.ws-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ws-border) transparent;
+}
+.ws-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.ws-scroll::-webkit-scrollbar-thumb {
+  background: var(--ws-border);
+  border-radius: 999px;
+}

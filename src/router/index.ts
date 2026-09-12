@@ -21,6 +21,10 @@ const WorldDistrictLive = () => import('../components/views/worldmap/DistrictLiv
 const WorldDistrictViz = () => import('../components/views/worldmap/DistrictViz.vue')
 const WorldMapLibrary = () => import('../components/views/worldmap/MapLibrary.vue')
 const WorldPhoneOverlay = () => import('../components/views/worldmap/PhoneOverlay.vue')
+// 「世界模拟」（P1 新主线页面）：入口在主菜单「开始游戏」那一排的第四个。
+// 与上面的 /world/* 是两回事：那些是地图工具页，这一条是玩家实际用的引导主线。
+// 同样懒加载 —— 它带着一套皮肤和四个子组件，不该进主 chunk。
+const WorldSim = () => import('../components/views/worldsim/WorldSim.vue')
 
 // 1. 定义路由表
 const routes = [
@@ -100,6 +104,12 @@ const routes = [
     path: '/world/phone-overlay',
     name: 'WorldPhoneOverlay',
     component: WorldPhoneOverlay,
+  },
+  // 世界模拟：只追加，不动上面任何既有路由
+  {
+    path: '/worldsim',
+    name: 'WorldSim',
+    component: WorldSim,
   },
 ]
 

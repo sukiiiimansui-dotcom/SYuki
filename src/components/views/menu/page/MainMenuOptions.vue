@@ -10,7 +10,10 @@
       <StartItem @click="() => emit('open-workshop')">{{ $t('views.menu.scriptEditor') }}</StartItem>
     </StartLine>
     <StartLine>
-      <StartItem @click="() => emit('open-world')">世界</StartItem>
+      <!-- 「世界」改名「世界模拟」（P1）：文案走 i18n（官方那条线这里是硬编码中文，
+           提 PR 时会被挑，所以我们的新入口从一开始就进 locales）。emit 名保持不变，
+           免得动到 MainMenu.vue 之外的既有接线。 -->
+      <StartItem @click="() => emit('open-world')">{{ $t('worldsim.entry') }}</StartItem>
     </StartLine>
     <StartLine>
       <StartItem @click="() => emit('open-memory')">记忆</StartItem>

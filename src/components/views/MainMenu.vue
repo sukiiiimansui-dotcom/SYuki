@@ -49,7 +49,7 @@
           @open-settings="handleOpenSettings"
           @open-credits="handleOpenCredits"
           @open-workshop="showWorkshopMenu"
-          @open-world="() => router.push('/world')"
+          @open-world="() => router.push('/worldsim')"
           @open-memory="() => router.push('/memory')"
           @open-bili="() => router.push('/bilibili')"
           @open-netmusic="() => router.push('/netmusic')"
