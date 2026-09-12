@@ -132,7 +132,7 @@ AI 每轮都能看到这样一小段（**只在变化时更新**，不浪费 tok
 | `src-tauri/src/ai_service/tools/world_map.rs` | 三个地图工具（按官方 `docs/function_call/extension.md` 的三步扩展法接入） |
 | `src-tauri/gen/android/.../location/LocationPlugin.kt` | 自写的 Android 定位插件（GPS 那条路） |
 | [`docs/world-map/`](docs/world-map/) | **19 篇设计文档**：分层世界结构 / 统一坐标 / 渲染方案 / AI 生成街区 / 手机端专项 / 与 LingChat 结合 / 接入实施 / 与 0.5.x 适配 / 完成度评估 / 需求问卷 / 实施方案 / **最终方案** / 架构地图 / PR 操作手册 / 进度总表 |
-| [`.github/workflows/world-map-check.yml`](.github/workflows/world-map-check.yml) | 世界地图的 CI：4 平台 cargo check + 前端 vue-tsc/vite build + 单测 |
+| [`world-map-check.yml`](https://github.com/sukiiiimansui-dotcom/SYuki/blob/feat/world-map/.github/workflows/world-map-check.yml) | 世界地图的 CI：4 平台 cargo check + 前端 vue-tsc/vite build + 单测（在 `feat/world-map` 分支上） |
 
 </details>
 
@@ -289,8 +289,8 @@ npx vue-tsc --noEmit --skipLibCheck && npx vite build   # 前端类型 + 构建
 cargo check --manifest-path src-tauri/Cargo.toml        # Rust 编译检查
 ```
 
-> 世界地图有独立 CI：[`.github/workflows/world-map-check.yml`](.github/workflows/world-map-check.yml)
-> （4 平台 cargo check + 前端 vue-tsc/vite build + 单测）。
+> 世界地图有独立 CI：[`world-map-check.yml`](https://github.com/sukiiiimansui-dotcom/SYuki/blob/feat/world-map/.github/workflows/world-map-check.yml)
+> （4 平台 cargo check + 前端 vue-tsc/vite build + 单测；该工作流在 `feat/world-map` 分支上）。
 
 ---
 
