@@ -1,13 +1,18 @@
 name: 世界地图 · 多平台编译验证与全平台构建
 
-# 两段式设计：
-#   ① 「编译验证」——推送到 feat/** 或 main 就自动跑：矩阵覆盖 Linux x64 / Windows / macOS / Linux arm64，
+# 职责边界（重要）：**这个工作流只做验证，不做打包。**
+#
+#   ① 编译验证 —— 推送/PR 就自动跑：矩阵覆盖 Linux x64 / Linux arm64 / Windows / macOS，
 #      目的是尽早抓到「只在某个平台编不过」的代码。
-#      这不是假想需求：我们真踩过一次 —— schedule.rs 里用 libc::localtime_r 取本地时间，
-#      它是 Unix 专属，Windows 上直接编不过；多平台矩阵就是为这种问题准备的。
-#   ② 「打包」——手动触发（workflow_dispatch，默认开启）：默认**只打 APK**
-#      （我们实际只用 APK，exe/dmg/deb 用不上）；桌面端打包作为可选验证保留，
-#      跑起来也只确认「能打包」，不上传任何桌面产物。
+#      这不是假想需求：我们真踩过一次 —— schedule.rs 用 libc::localtime_r 取本地时间，
+#      那是 Unix 专属、Windows 上直接编不过；后来又抓到 reqwest 0.13 把 .form() 挪到
+#      feature 后面（四个平台同时炸）。多平台矩阵就是为这类问题准备的。
+#   ② 前端类型检查 + 构建，③ 世界地图单元测试。
+#
+# 打包不在这里重复实现，直接用仓库已有的工作流：
+#   · APK（我们实际使用的产物）→ build-android.yml（手动触发，带签名、建 Release）
+#   · 桌面端安装包              → release.yml / dev-build.yml
+# 这样打包逻辑只有一份，不会跟官方工作流各自漂移。
 #
 # 注意：不要给 checkout 加 `lfs: true` —— 本仓库 .gitattributes 没有 LFS 规则、
 # `git lfs ls-files` 为 0，而服务器上又缺 LFS 对象，加了会 404 直接挂。
@@ -24,15 +29,6 @@ on:
   pull_request:
     branches: ['main', 'master']
   workflow_dispatch:
-    inputs:
-      build_packages:
-        description: '编译验证通过后，继续打全平台安装包（含 APK）'
-        type: boolean
-        default: true
-      skip_desktop:
-        description: '跳过桌面端打包（默认跳过：我们实际只用 APK，exe/dmg/deb 用不上）'
-        type: boolean
-        default: true
 
 concurrency:
   group: world-map-check-${{ github.ref }}
@@ -171,168 +167,3 @@ jobs:
       - name: 世界地图单元测试
         working-directory: src-tauri
         run: cargo test --lib world_map -- --nocapture
-
-  # ─────────────── ④ 全平台安装包（手动触发；桌面端）───────────────
-  packages-desktop:
-    name: 安装包 · ${{ matrix.label }}
-    needs: [rust-check, rust-test]
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_packages && !inputs.skip_desktop }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: windows-latest,   label: Windows x64,  bundles: nsis }
-          - { os: macos-latest,     label: macOS arm64,  bundles: dmg }
-          - { os: ubuntu-22.04,     label: Linux x64,    bundles: deb }
-          - { os: ubuntu-24.04-arm, label: Linux arm64,  bundles: deb }
-    runs-on: ${{ matrix.os }}
-    env:
-      CARGO_PROFILE_RELEASE_OPT_LEVEL: "s"
-      CARGO_PROFILE_RELEASE_STRIP: "true"
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 安装 Tauri 所需的 Linux 依赖
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
-            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
-            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
-            libpipewire-0.3-dev libspa-0.2-dev libgbm-dev libegl1-mesa-dev \
-            libx11-dev libxcb1-dev libxrandr-dev libxcomposite-dev libxcursor-dev \
-            libxi-dev libxtst-dev libwayland-dev libdbus-1-dev pkg-config
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: latest
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: 'pnpm'
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ./src-tauri
-          cache-targets: true
-          cache-on-failure: true
-          shared-key: world-map-pkg-${{ matrix.os }}
-
-      - name: 安装依赖
-        run: pnpm i --frozen-lockfile
-
-      # tauri build 会自动跑 tauri.conf.json 的 beforeBuildCommand（含资源准备），
-      # 这里不需要像 cargo check 那样手动补脚本。
-      - name: 打包（${{ matrix.label }}）
-        run: pnpm tauri build --bundles ${{ matrix.bundles }}
-
-      # 只验证「能打出安装包」，**不上传产物**：我们实际只用 APK，
-      # exe / dmg / deb 留着既占配额又没人下载。
-      - name: 确认产物已生成（不保留）
-        run: |
-          echo "=== ${{ matrix.label }} 产物 ==="
-          find src-tauri/target/release/bundle -maxdepth 3 -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) -exec ls -lh {} \;
-          echo "（按约定只做可打包性验证，产物不保留）"
-
-  # ─────────────── ⑤ 全平台安装包（手动触发；APK 才是我们用的）───────────────
-  package-android:
-    name: 安装包 · Android APK
-    needs: [rust-check, rust-test]
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_packages }}
-    runs-on: ubuntu-latest
-    env:
-      CARGO_PROFILE_RELEASE_OPT_LEVEL: "s"
-      CARGO_PROFILE_RELEASE_STRIP: "true"
-      # ubuntu-latest 运行器自带 Android SDK/NDK，路径固定
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      NDK_HOME: /usr/local/lib/android/sdk/ndk
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: latest
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: 'pnpm'
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android, armv7-linux-androideabi
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ./src-tauri
-          cache-targets: true
-          cache-on-failure: true
-          shared-key: ${{ runner.os }}-world-map-pkg-android
-
-      - name: 安装 Linux 依赖
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
-            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
-            libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
-            libpipewire-0.3-dev libspa-0.2-dev libgbm-dev libegl1-mesa-dev \
-            libx11-dev libxcb1-dev libxrandr-dev libxcomposite-dev libxcursor-dev \
-            libxi-dev libxtst-dev libwayland-dev libdbus-1-dev pkg-config zip
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '21'
-
-      - name: 安装依赖
-        run: pnpm i --frozen-lockfile
-
-      - name: 生成图标并准备 Android 工程
-        run: |
-          pnpm run init
-          pnpm android:prepare
-
-      - name: 缓存 Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-wm-${{ hashFiles('src-tauri/gen/android/**/*.gradle*', 'src-tauri/gen/android/**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      # 签名密钥是可选的：有就走正式签名（产物可直接装机），没有就只出未签名 APK。
-      # 这样「验证能否打包」不会被密钥配置挡住。
-      - name: 配置 Android 签名（密钥存在时）
-        env:
-          KEY_B64: ${{ secrets.ANDROID_KEY_BASE64 }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        run: |
-          if [ -z "$KEY_B64" ]; then
-            echo "未配置签名密钥 → 跳过，只产出未签名 APK"
-            exit 0
-          fi
-          echo "$KEY_B64" | base64 -d > $HOME/upload-keystore.p12
-          cat > src-tauri/gen/android/keystore.properties << EOF
-          storeFile=$HOME/upload-keystore.p12
-          keyAlias=$KEY_ALIAS
-          password=$KEY_PASS
-          EOF
-          echo "已写入 keystore.properties"
-
-      - name: 构建 APK
-        run: pnpm android:build
-
-      - name: 上传 APK（我们实际使用的产物）
-        uses: actions/upload-artifact@v4
-        with:
-          name: world-map-apk
-          if-no-files-found: error
-          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
