@@ -43,6 +43,7 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use super::geo;
+use super::loc_android::{self, GpsOutcome};
 
 // ═══════════════════════════════════════════════════════════════════
 // 网络预算常量
@@ -86,6 +87,35 @@ const CITY_LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
 const LOCATION_BUDGET_FAST: Duration = Duration::from_millis(5200);
 /// 不传 `fast` 时的总预算（目前没有调用方走这条，等于「IP 8 秒 + 反查 3 秒」再放一点）
 const LOCATION_BUDGET: Duration = Duration::from_secs(11);
+
+/// 系统定位（GPS）冷启动预算（`fast: true`）。
+///
+/// 为什么只有 3 秒：前端给这个命令套的是 **6 秒**（`worldMap.ts:270` 的 `withTimeout`），
+/// 本文件只敢用 5.2 秒；GPS 之后还得给 ③ IP 兜底和「反查行政区」留地方。
+/// 3 秒足够覆盖两种**能成**的情况 —— 系统缓存命中（毫秒级）和 GPS 热启动（1~2 秒）；
+/// 冷启动（5~30 秒）本来就等不到，**与其让用户干等，不如早点退 IP**。
+/// 而且这次请求会把 GPS 引擎唤醒：用户过几十秒再点一次「📍 按定位」，
+/// 走的就是缓存命中 + 真实坐标了。
+const GPS_TIMEOUT_FAST: Duration = Duration::from_millis(3000);
+
+/// 系统定位预算（不传 `fast` 时）。目前没有调用方走这条，取值只为与 [`IP_TIMEOUT`] 对称。
+const GPS_TIMEOUT: Duration = Duration::from_secs(7);
+
+/// 给「坐标 → 行政区路径」反查**固定留的余量**。
+///
+/// 为什么必须留：`DistrictLive.vue::locate()` 必须要 `path` 才能拼出「市·区」，
+/// 拿不到就直接报「定位结果没有行政区信息」。而 [`remaining`] 是按**剩余预算**算的 ——
+/// 如果 GPS 先把预算吃干净再退 IP，反查就会拿到 0 秒，静默丢掉 `path`。
+/// 1.2 秒是实测「缓存命中 ms 级 / 需要联网时够一次请求」的量级。
+const GEOCODE_RESERVE: Duration = Duration::from_millis(1200);
+
+/// 系统缓存定位的最大可接受年龄（5 分钟）。
+///
+/// Android 的 `getLastKnownLocation(provider)` 拿到的是**任意 App** 上次定位留下的结果，
+/// 命中就是毫秒级返回。对「省 → 市 → 区县」这个粒度的地图来说，5 分钟内的位置
+/// 就是当前位置 —— 拿它换掉一次注定超时的 GPS 冷启动非常划算。
+/// （官方 `tauri-plugin-geolocation` 的 `getLastLocation(maximumAge)` 是同一个思路。）
+const GPS_MAX_AGE: Duration = Duration::from_secs(300);
 
 /// 反向地理编码（坐标 → 省市区路径）的**单步上限**。
 ///
@@ -131,11 +161,21 @@ const WEATHER_TTL_SECS: u64 = 1800;
 /// ## 三条路的优先级
 ///
 /// ① **手动坐标**（`lat`+`lng` 都给且合法）—— 最先判，不碰网络、不碰权限、永远可用。
-/// ② **系统定位** —— **故意留空**，见下面那段长注释（要做得先加插件 + 加权限）。
+/// ② **真实 GPS**（仅 Android）—— Kotlin 侧 `LocationPlugin`，见 [`super::loc_android`]。
+///    桌面端 / 插件没注册 / 权限被拒 / 超时，**一律往下退**，不报错。
 /// ③ **IP 定位兜底**（ip-api.com）—— 永远不挂起，代价是只到城市级。
 ///
 /// 三条都不成，返回 `{error, hint, source:"none"}` 对象而不是 `Err`：
 /// `WorldMap.vue` 判的就是 `loc.error`，拿到就把 hint 显示出来并回到默认城市。
+///
+/// ## 各阶段的时间预算（`fast: true`，前端硬限 6000ms）
+///
+/// | 阶段 | 预算 | 说明 |
+/// |---|---|---|
+/// | 总墙钟 | 5200ms | [`LOCATION_BUDGET_FAST`]，留 0.8 秒给 IPC |
+/// | ② GPS | ≤3000ms | [`GPS_TIMEOUT_FAST`]；系统缓存命中时是**毫秒级** |
+/// | ③ IP | `min(4000, 剩余-1200)` | GPS 没介入时就是原来的 4 秒，一点没变 |
+/// | 反查行政区 | 剩余（上限 3000ms） | [`GEOCODE_RESERVE`] 保证它至少还有 1.2 秒 |
 ///
 /// ## 为什么没有 `termux-location`
 ///
@@ -144,23 +184,25 @@ const WEATHER_TTL_SECS: u64 = 1800;
 /// 更糟的是它在**未授权时会挂起不返回**（真源为此专门加了 8 秒超时 + `?force=1` 熔断）。
 /// 换句话说，搬过来不是「不生效」，是「可能把地图首页卡死」。
 ///
-/// ## 要补真定位得先做什么（本次**没做**，因为前提都不满足）
+/// ## 为什么不用 `tauri-plugin-geolocation` / WebView 的 `navigator.geolocation`
 ///
-/// 1. **加插件**：`Cargo.toml` 里现在**没有** `tauri-plugin-geolocation`
-///    （已核对全文，也没有任何 geolocation 相关依赖）。
-/// 2. **加 Android 权限**：`src-tauri/gen/android/app/src/main/AndroidManifest.xml`
-///    目前只有 `INTERNET` / `RECORD_AUDIO` / `MODIFY_AUDIO_SETTINGS`，
-///    **没有** `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION`。
-///    注意这两个是 *dangerous* 权限，光在 manifest 里声明没用，还要**运行时**申请。
-/// 3. **走 WebView 的 `navigator.geolocation` 也不行**：Tauri 的 Android WebView 胶水
-///    （`tauri-2.11.1/mobile/android/src/main/java/app/tauri/`）里既没有
-///    `WebSettings.setGeolocationEnabled(true)`，也没有
-///    `WebChromeClient.onGeolocationPermissionsShowPrompt`（全 crate grep 无命中）。
-///    少了这两个，`navigator.geolocation.getCurrentPosition` 只会走 error 回调。
-///    要做得在 Android 侧自己接这两个回调，属于「改壳」而不是「加命令」。
-/// 4. 桌面端还得另配一套后端（同一个插件在 Windows/macOS/Linux 上是不同实现）。
+/// · 官方插件：本机离线缓存里**没有**这个 crate（crates.io 403，加进去本地就验不了），
+///   而且它的 Android 实现依赖 **Google Play Services** —— 国内大量机型没有可用 GMS，
+///   那条路在目标机器上必然失败。
+/// · `navigator.geolocation`：tauri 2.11.1 的 Android 胶水里既没有
+///   `WebSettings.setGeolocationEnabled(true)`，也没有
+///   `WebChromeClient.onGeolocationPermissionsShowPrompt`（全 crate grep 无命中），
+///   `getCurrentPosition` 只会走 error 回调；想补就得覆盖 Wry 已设好的 WebChromeClient
+///   （文件选择 / console 都挂在上面）⇒ 破坏现有功能。
 ///
-/// 结论：定位精度这条留给「加插件 + 加权限」的独立改动，本次只上①③两条永远可用的。
+/// 完整调研（含每条路的证据与文件清单）见 `docs/world-map/17-Android定位方案调研.md`。
+///
+/// ## `force` 参数
+///
+/// 前端 `WorldMap.vue::relocate()` 传的是 `{force: true, fast: true}`。真源里它用于清
+/// termux-location 的熔断标志；这里没有那条路，也没有可清的状态，**收下不用** ——
+/// 只为保住调用点的参数形状，前端不用改。GPS 走的是「5 分钟内的系统缓存直接采信」
+/// （[`GPS_MAX_AGE`]），不因 `force` 而变。
 #[tauri::command]
 pub async fn world_map_location(
     app: AppHandle,
@@ -199,23 +241,83 @@ pub async fn world_map_location(
         return Ok(location_payload(&app, la, ln, json!({"source": "manual"}), budget).await);
     }
 
-    // ── ② 系统定位：故意留空，理由见函数文档 ──────────────────────
+    // ── ② 真实 GPS（仅 Android；Kotlin 侧 LocationPlugin）─────────
+    //
+    // 预算 = 「总预算还剩多少」先扣掉给反查行政区留的 GEOCODE_RESERVE，再按上限封顶。
+    // 注意**不额外给 ③ IP 留固定份额**：GPS 直接 Unavailable（桌面端 / 插件没注册）
+    // 或者缓存命中秒回时，省下的时间自然顺延给 IP —— 那些机器上 IP 拿到的还是原来的
+    // 4 秒，与改动前**完全一致**；只有 GPS 真花掉时间时 IP 才会自动收窄。
+    //
+    // `gps_note` 只用来在「三条路全败」时给一句更具体的原因，不影响任何成功路径。
+    let gps_note = match loc_android::locate(&app, gps_budget(deadline, fast), GPS_MAX_AGE).await {
+        GpsOutcome::Fix(fix) => {
+            // 命中：反查行政区用**剩余全部预算**（上限仍是 GEOCODE_MAX）
+            let budget = remaining(deadline);
+            return Ok(location_payload(&app, fix.lat, fix.lng, fix.extra(), budget).await);
+        }
+        GpsOutcome::Denied(m) => Some(format!("系统定位权限被拒绝（{m}）")),
+        GpsOutcome::Timeout => Some("系统定位在预算内没拿到结果".to_string()),
+        GpsOutcome::Failed(m) => Some(format!("系统定位失败：{m}")),
+        // 桌面端 / 插件没注册：不是错误，什么都不用说
+        GpsOutcome::Unavailable => None,
+    };
 
     // ── ③ IP 兜底（不依赖任何权限，代价是只到城市级）──────────────
-    let timeout = if fast { IP_TIMEOUT_FAST } else { IP_TIMEOUT };
+    //
+    // 超时不再写死成 4 秒：改成「剩余预算 - GEOCODE_RESERVE」再对照常量封顶。
+    // GPS 没介入时剩余 = 总预算，算出来仍是原来的 4 秒（fast）/ 8 秒（非 fast）。
+    let ip_cap = if fast { IP_TIMEOUT_FAST } else { IP_TIMEOUT };
+    let timeout = left(deadline).saturating_sub(GEOCODE_RESERVE).min(ip_cap);
     match ip_locate(timeout).await {
         Some(ip) => {
             let budget = remaining(deadline);
-            Ok(location_payload(&app, ip.lat, ip.lng, ip.extra(), budget).await)
+            let mut out = location_payload(&app, ip.lat, ip.lng, ip.extra(), budget).await;
+            // GPS 那条路失败过的话，把原因捎带在 hint 上。
+            // 前端只在 `error` 存在时才读 `hint`，所以这里**不会**改变任何界面行为，
+            // 纯粹是给「为什么这次只有城市级」留个线索。
+            if let Some(note) = gps_note {
+                if let Some(o) = out.as_object_mut() {
+                    o.insert("hint".into(), json!(format!("{note}；已退回城市级 IP 定位")));
+                }
+            }
+            Ok(out)
         }
-        None => Ok(json!({
-            "lat": 0.0,
-            "lng": 0.0,
-            "source": "none",
-            "error": "定位失败",
-            "hint": "IP 定位没拿到结果（断网或 ip-api.com 不可达），可手动选择区域",
-        })),
+        None => {
+            let hint = match gps_note {
+                Some(note) => format!(
+                    "{note}；IP 定位也没拿到结果（断网或 ip-api.com 不可达），可手动选择区域"
+                ),
+                None => {
+                    "IP 定位没拿到结果（断网或 ip-api.com 不可达），可手动选择区域".to_string()
+                }
+            };
+            Ok(json!({
+                "lat": 0.0,
+                "lng": 0.0,
+                "source": "none",
+                "error": "定位失败",
+                "hint": hint,
+            }))
+        }
     }
+}
+
+/// 系统定位阶段的预算。
+///
+/// 从「总预算还剩多少」里先扣掉 [`GEOCODE_RESERVE`]，再按 [`GPS_TIMEOUT_FAST`] /
+/// [`GPS_TIMEOUT`] 封顶。钳到 0 也安全：Kotlin 侧收到 0/负数会用它的默认值，
+/// 而外层 `tokio::time::timeout` 会立刻 `Elapsed`，于是直接退 IP 兜底。
+fn gps_budget(deadline: Instant, fast: bool) -> Duration {
+    let cap = if fast { GPS_TIMEOUT_FAST } else { GPS_TIMEOUT };
+    left(deadline).saturating_sub(GEOCODE_RESERVE).min(cap)
+}
+
+/// 截止时刻前还剩多少（**不封顶**）。
+///
+/// 与 [`remaining`] 的分工：`remaining` 是「给反查行政区用的额度」，会对
+/// [`GEOCODE_MAX`] 再取一次小；这里要的是真实剩余，用来算后面每一步还能花多少。
+fn left(deadline: Instant) -> Duration {
+    deadline.saturating_duration_since(Instant::now())
 }
 
 /// 截止时刻前还剩多少（已过就返回 0），并对 [`GEOCODE_MAX`] 取小。

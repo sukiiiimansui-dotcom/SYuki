@@ -232,7 +232,12 @@ pub fn run() {
         .plugin(tauri_plugin_screenshots::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_android_fs::init());
+        .plugin(tauri_plugin_android_fs::init())
+        // 世界模拟：Android 真实定位桥（`world_map_location` 的第 ② 条路）。
+        // 它**不注册任何 Tauri 命令**，只把 Kotlin 侧 `LocationPlugin` 挂进 PluginManager，
+        // 所以既不进 invoke_handler、也不需要 capabilities 权限 —— 前端可调用面**零变化**。
+        // 非 Android 平台上它是一个空插件（没有 setup、没有命令），不产生任何行为。
+        .plugin(world_map::loc_android::init());
 
     // 桌面端额外插件
     #[cfg(desktop)]

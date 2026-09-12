@@ -9,6 +9,38 @@
          normal 权限，声明即授予，无需运行时请求。 -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!-- ══════════════════════════════════════════════════════════════
+         世界模拟「真实 GPS 定位」（world_map_location 的第 ② 条路）
+         ══════════════════════════════════════════════════════════════
+         这两个都是 *dangerous* 权限：**在 manifest 里声明不会弹窗**，
+         真正的弹窗由 Kotlin 侧 LocationPlugin.getLocation() 调
+         requestPermissionForAliases("location", ...) 时才出现
+         —— 所以没用过地图的用户完全不会被打扰。
+
+         但**必须先在这里声明**，否则整个流程静默失败：
+         PluginHandle.validatePermissions() 会拿 PackageManager.getPackageInfo(GET_PERMISSIONS)
+         逐个核对，缺任何一个就直接 invoke.reject("Missing the following permissions in
+         AndroidManifest.xml: ...")，连系统弹窗都不会出现。
+         （权限别名 "location" ↔ 这两个字符串的绑定写在
+          app/src/main/java/com/syuki/lingchat/location/LocationPlugin.kt 的 @TauriPlugin 注解里。）
+
+         COARSE = 「大致位置」，FINE = 「精确位置」；Android 12+ 弹窗会让用户二选一，
+         两个都声明才能同时支持「只给大致」和「给精确」两种选择。 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- 必须显式写 required="false"，否则会被「隐含特性」规则误伤：
+         Google Play 会从 ACCESS_FINE_LOCATION 推导出 android.hardware.location.gps /
+         android.hardware.location.network 为 **required=true**，把没有 GPS 的设备
+         （部分平板/模拟器/电视盒子）直接过滤掉、搜不到这个应用。
+         我们本来就允许降级（拿不到 GPS 就退网络定位，再退 IP），所以两个都标 false。
+
+         注意 android.hardware.location（不带 .gps/.network 后缀）也会被隐含推导，
+         一并标掉。 -->
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.location.network" android:required="false" />
+
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 

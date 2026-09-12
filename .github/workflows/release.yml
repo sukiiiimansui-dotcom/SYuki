@@ -71,7 +71,7 @@ jobs:
           - platform: linux-aarch64
             os: ubuntu-24.04-arm
             target: ''
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}  # 修：原来用 matrix.platform（windows-amd64 这种非法标签），job 会直接失败
     steps:
       - uses: actions/checkout@v4
 

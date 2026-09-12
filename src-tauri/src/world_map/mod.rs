@@ -19,6 +19,12 @@ pub mod geo;
 // 同样要按**完整路径**注册：world_map::live::world_map_location —— 命令宏在定义处
 // （本文件的子模块 live.rs）生成，写 world_map::world_map_location 会 E0433。
 pub mod live;
+// Android 真实定位桥（`world_map_location` 的第 ② 条路，见 live.rs 的优先级说明）。
+// 它**不暴露任何 Tauri 命令**，只有一个要在 lib.rs 的 Builder 上注册的 Tauri 插件
+// （`world_map::loc_android::init()`）—— 所以不用加进 invoke_handler。
+// 非 Android 平台上这个模块是空转的（`locate()` 直接返回 Unavailable），
+// 桌面端行为与改动前完全一致。
+pub mod loc_android;
 pub mod maplib;
 pub mod osm;
 pub mod render;
