@@ -162,6 +162,15 @@
               :grid="WS_GRID"
               :zoom="districtScale"
             />
+            <!-- P5-2：事件气泡（bubble 通道）。铺在同一层里才会跟着地图平移缩放；
+                 位置不在这里算（`WsEventBubble` 用 letterboxOf + 角色的 px/py 自己算）。 -->
+            <WsEventBubble
+              :bubbles="wsEventBubbles"
+              :placed="placedActors"
+              :grid="WS_GRID"
+              :zoom="districtScale"
+              :me-name="meName"
+            />
           </template>
         </WsDistrict>
 
@@ -183,6 +192,26 @@
         <button class="ws-chip" type="button" @click="loadActors(true)">👥 {{ placedActors.length }}</button>
         <button class="ws-chip" type="button" :title="t('worldsim.me.title')" @click="openMe">🙂 {{ meName }}</button>
       </div>
+
+      <!-- ⑦.6 P5-2：事件流面板（含三通道开关）。钉在右下角、小人浮标上方；
+           开关的语义就是「这类事件要不要打扰我」，所以它跟事件列表在同一处。 -->
+      <WsEventFeed
+        v-if="step === 'neighborhood'"
+        :events="wsEventItems"
+        :channels="wsEventChannels"
+        :pending="wsEventPending"
+        :pending-after="wsEventPendingAfter"
+        :speech-hint="wsEventSpeechHint"
+        :now-ms="wsEventNowMs"
+        :reason="wsEventReason"
+        :next-ok-in-secs="wsEventNextOk"
+        :supported="wsEventSupported"
+        :running="wsEventRunning"
+        :error="wsEventError"
+        @toggle="wsEvents.setChannel"
+        @open="onEventPanelOpen"
+        @refresh="onEventPanelOpen"
+      />
 
       <!-- ⑧ P2-3 / P2-4：角色面板（含立绘侧边栏）/ 自己的面板。
            挂在 .ws-stage 里而不是 <main> 里：定位是相对 stage 的，
@@ -284,6 +313,9 @@ import WsMePanel from './WsMePanel.vue'
 // P4-2 / P4-3：行程卡 + 地图上的交通工具（样式由组件自己 import worldsim-trip.css）
 import WsTripCard from './WsTripCard.vue'
 import WsVehicleMark from './WsVehicleMark.vue'
+// P5-2：事件通知三通道的地图气泡 + 事件流面板（数据层在 useWorldEvents）
+import WsEventBubble from './WsEventBubble.vue'
+import WsEventFeed from './WsEventFeed.vue'
 import { wsToast, useWsToast } from './wsToast'
 import type { PlacedActor } from './wsActors'
 import { geoLevelOf, levelLabel } from './wsGeo'
@@ -297,6 +329,7 @@ import { useWorldSimGestures } from '@/composables/useWorldSimGestures'
 import { useWsActors } from '@/composables/useWsActors'
 import { useWsPanel } from '@/composables/useWsPanel'
 import { useWorldTrips } from '@/composables/useWorldTrips'
+import { popupKindOf, useWorldEvents } from '@/composables/useWorldEvents'
 import { useGameStore } from '@/stores/modules/game'
 
 const router = useRouter()
@@ -454,6 +487,45 @@ const currentRoleName = computed(() => {
   const r = id ? (gameStore.gameRoles as Record<number, { roleName?: string } | undefined>)[id] : undefined
   return String(r?.roleName || '').trim()
 })
+
+/* ══ P5-2：现实事件（事件通知三通道）════════════════════════════════════════
+ * 数据层（tick 轮询 + `world_map:event` 广播 + 三通道开关 + 记忆交接）全在
+ * `useWorldEvents`；这里只做三件事：
+ *   ① 把当前说话的角色名传进 tick（`role`）—— 事件挂到正确的人头上靠它；
+ *   ② popup 通道：抽中时用 `wsToast` 弹一条（配色按事件类别）；
+ *   ③ 把开关/面板的交互转回数据层。
+ * bubble 通道由 composable 自己写 `bubbles`（组件 `WsEventBubble` 只负责画），
+ * speech 通道**前端不做额外事**（后端已把事件注进「最近：…」，见 composable 文件头）。
+ * ⚠️ 生命周期：进到小区图才 `start()`（引擎要 `scene` 才有意义），离开本页 `stop()`。 */
+const wsEvents = useWorldEvents({
+  role: currentRoleName,
+  onFired: (e) => {
+    // 关掉这一路就该安静（气泡那一路由 composable 内部判，这里只管提示条）
+    if (!wsEvents.channels.value.popup) return
+    wsToast(e.popup || e.event?.title || '', popupKindOf(e.event?.category))
+  },
+})
+// 解构出来给模板用：模板只对**顶层** ref 自动解包，`wsEvents.xxx` 这种嵌套的不会解
+const {
+  events: wsEventItems,
+  bubbles: wsEventBubbles,
+  channels: wsEventChannels,
+  pendingLines: wsEventPending,
+  pendingAfter: wsEventPendingAfter,
+  speechHint: wsEventSpeechHint,
+  nowMs: wsEventNowMs,
+  lastReason: wsEventReason,
+  nextOkInSecs: wsEventNextOk,
+  lastError: wsEventError,
+  supported: wsEventSupported,
+  running: wsEventRunning,
+} = wsEvents
+
+/** 面板展开 / 点刷新：两个自然检查点，顺手把事件历史与待写记忆各拉一次 */
+function onEventPanelOpen() {
+  void wsEvents.refreshHistory()
+  void wsEvents.drainMemory()
+}
 
 /** 组一次 patch 并推上去（幂等；失败只记日志，绝不打断界面） */
 async function syncRuntime(reason: string): Promise<void> {
@@ -684,7 +756,11 @@ function onWorldEntered() {
 watch(
   () => sim.step.value,
   (s) => {
-    if (s === 'neighborhood') void loadActors()
+    if (s === 'neighborhood') {
+      void loadActors()
+      // P5-2：进到小区图才给事件引擎打火（它要 `scene` 才有意义；start 幂等）
+      wsEvents.start()
+    }
     // 离开小区图时把面板收掉：立绘的 73MB 必须在离开那一刻还回去
     if (s !== 'neighborhood' && wsPanel.open.value) wsPanel.closePanel()
   },
@@ -708,6 +784,9 @@ onBeforeUnmount(() => {
   wsPanel.closePanel()
   clearToasts()
   if (syncTimer !== null) window.clearTimeout(syncTimer)
+  // P5-2：卸载前把待写记忆收一遍（自然检查点），再停掉 tick 轮询、广播订阅与气泡
+  void wsEvents.drainMemory()
+  wsEvents.stop()
   // ⚠️ 必须清：注入的开关就是「runtime 里有没有 scene」，
   // 不清的话回到聊天页会继续带着上次的地图上下文跟模型说话。
   void clearRuntime()

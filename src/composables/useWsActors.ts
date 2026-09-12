@@ -141,6 +141,8 @@ export function useWsActors(opts: UseWsActorsOptions = {}) {
   const runtime = ref<Record<string, unknown> | null>(null)
   /** 最近一次日程（面板里按角色名查） */
   const schedule = ref<Awaited<ReturnType<typeof worldMapApi.schedule>> | null>(null)
+  /** 上次取日程时**有没有**拿到设施表 —— 决定 kind-only 的结果能不能继续用（见 ② 的注释） */
+  let scheduleHadFacilities = false
   /** 当前时间 + 天气（P2-4 的第 3 项） */
   const nowText = ref('')
   const weatherText = ref('')
@@ -236,10 +238,20 @@ export function useWsActors(opts: UseWsActorsOptions = {}) {
         runtime.value = null
       }
 
-      /* ② 日程（拿「现在在做什么 / 在哪个设施」）——失败不影响出人 */
-      if (!schedule.value) {
+      /* ② 日程（拿「现在在做什么 / 在哪个设施」）——失败不影响出人
+       *
+       * ⚠️ 必须把 runtime 里那份**设施表**带回去：后端只有拿到它，才能把日程里的
+       * "商业区/住宅区"这种**类型**落到**具体设施点**上（给 `place.name`）。
+       * 不带的话 `place` 恒为空 → 推给 Rust 的 `facility` 也是空 →
+       * 事件引擎判室内外恒为「户外」→ 停电/失眠那批仅室内事件永不触发（静默）。
+       * 缓存的判据也因此加上"当时有没有设施表"：首轮设施表还没装好时算出来的
+       * kind-only 结果不能一直用下去。 */
+      const facs = (runtime.value?.facilities as unknown[] | undefined) || []
+      const facsReady = facs.length > 0
+      if (!schedule.value || (facsReady && !scheduleHadFacilities)) {
         try {
-          schedule.value = await worldMapApi.schedule()
+          schedule.value = await worldMapApi.schedule(undefined, undefined, facs)
+          scheduleHadFacilities = facsReady
         } catch {
           schedule.value = null
         }

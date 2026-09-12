@@ -308,8 +308,33 @@ export const worldMapApi = {
       return {}
     }
   },
-  schedule: async (now?: string, area?: string): Promise<SchedulePayload> =>
-    (isTauriRuntime() ? invoke<SchedulePayload>('world_map_schedule', { now, area }) : http.schedule(now, area)),
+  /**
+   * 日程（谁现在该在哪）。
+   *
+   * ⚠️ `facilities` **必须传**（从 `world_map_runtime` 里那份设施表原样带回去）：
+   * 后端 `schedule::role_place(kind, facilities, seed)` 只有在拿到设施表时才能把
+   * "商业区"这种**类型**落到**具体设施点**上（给 `place.name`）。
+   * 不传的话后端返回的是 `placeSource: "kind-only"`、`place.name` 为空，于是：
+   *   · 地图上角色的「地点」永远是空的 → `wsRuntimePush` 推上去的 `facility` 也是空
+   *   · 事件引擎（`event_cmd.rs`）按空 place 判室内外 → 恒为户外
+   *     → **停电/停水/失眠/睡过头这批"仅室内"事件永远不会触发**，而且不报错
+   *   · "消费场所 ×1.8 / 户外场所 ×1.4" 两条权重修正同样永不生效
+   * 也就是说：少传这一个参数，事件引擎就"半边瘫"，而表面上一切正常。
+   */
+  schedule: async (
+    now?: string,
+    area?: string,
+    facilities?: unknown[],
+  ): Promise<SchedulePayload> =>
+    isTauriRuntime()
+      ? invoke<SchedulePayload>('world_map_schedule', {
+          now,
+          area,
+          // 空数组与 undefined 等价（后端 `facilities.as_deref()` 拿不到就按 kind-only 走），
+          // 但传 `[]` 会让后端多做一次无意义的匹配，所以空的时候就别传。
+          facilities: facilities && facilities.length ? facilities : undefined,
+        })
+      : http.schedule(now, area),
   transportPlan: async (
     a: { lat: number; lng: number },
     b: { lat: number; lng: number },
