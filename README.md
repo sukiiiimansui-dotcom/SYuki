@@ -51,9 +51,9 @@
 ### 五层下钻：国 → 省 → 市 → 区县 → 小区
 
 <p align="center">
-  <img src="docs/assets/worldsim/01-national.png" width="200" alt="全国首屏：34 个省级区划">
-  <img src="docs/assets/worldsim/03-city.png" width="200" alt="广州市：11 个市辖区">
-  <img src="docs/assets/worldsim/02-neighborhood.png" width="200" alt="小区地图：AI 生成街区">
+  <img src="docs/assets/worldsim/01-national.png" width="270" alt="全国首屏：34 个省级区划">
+  <img src="docs/assets/worldsim/02-city.png" width="270" alt="广州市：11 个市辖区">
+  <img src="docs/assets/worldsim/03-neighborhood.png" width="270" alt="小区地图：AI 生成街区">
 </p>
 
 <p align="center"><sub>全国首屏（只画省界，秒开） · 市级下钻 · 小区精绘（<b>地理位置是真的，街区布局是 AI 编的</b>）</sub></p>
@@ -61,9 +61,12 @@
 - 首屏**只画省级轮廓（34 个省级区划）**，不画全国几千个区划 → 打开即秒开
 - 行政区划走**本地缓存**，只有没去过的省市才联网
 - 渲染用 **SVG** 而不是 PNG：一张 8–25KB（小一个数量级）、缩放不糊、中文交给系统字体、还能做图层开关和生长动画
-- 深色主题：
+- 内置三套地图风格（高德 / 深色 / 水系）+ 小清新的两套皮肤：
 
-<p align="center"><img src="docs/assets/worldsim/04-dark.png" width="200" alt="深色主题"></p>
+<p align="center">
+  <img src="docs/assets/worldsim/04-dark.png" width="400" alt="深色主题">
+  <img src="docs/assets/worldsim/05-water.png" width="400" alt="水系风格">
+</p>
 
 ### 世界会自己发生事情
 
@@ -90,7 +93,7 @@
   **短途步行、长途自动选车**，速度可以是真实速率，也可以开 100× 加速
 - **9 种出行方式 + 10 个扁平立绘**（每个 < 1KB，照 CC0 参考图重绘，无授权尾巴）：
 
-<p align="center"><img src="docs/assets/worldsim/05-vehicles.png" width="620" alt="十种交通工具立绘"></p>
+<p align="center"><img src="docs/assets/worldsim/06-vehicles.png" width="640" alt="十种交通工具立绘"></p>
 
 - **点击角色看详情**：立绘侧边栏 + 七项信息（立绘 / 日程 / 位置 / 记忆 / 关系 / 对话 / 快捷动作）
 - **玩家自己也有面板**：头像（可上传）/ 位置 / 时间天气 / 众人小地图 / 日程待办

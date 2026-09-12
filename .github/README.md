@@ -14,9 +14,12 @@
 > （角色知道自己在哪、附近有什么、你离他多远）。
 
 <p align="center">
-  <img src="../docs/assets/worldsim/01-national.png" width="180" alt="全国首屏">
-  <img src="../docs/assets/worldsim/02-neighborhood.png" width="180" alt="小区地图（AI 生成街区）">
-  <img src="../docs/assets/worldsim/04-dark.png" width="180" alt="深色主题">
+  <img src="../docs/assets/worldsim/01-national.png" width="290" alt="全国首屏（34 个省级区划）">
+  <img src="../docs/assets/worldsim/03-neighborhood.png" width="290" alt="小区地图（AI 生成街区）">
+</p>
+<p align="center">
+  <img src="../docs/assets/worldsim/02-city.png" width="290" alt="广州市：11 个市辖区">
+  <img src="../docs/assets/worldsim/04-dark.png" width="290" alt="深色主题">
 </p>
 
 | | |
@@ -28,7 +31,7 @@
 | 💬 **注入对话上下文** | 位置 / 附近设施 / 天气 / 你离他多远 / 最近发生了什么 —— 只在变化时更新 |
 | 🎨 **小清新 UI** | 薄荷奶油 + 毛玻璃两套皮肤、深色模式、手机等比缩放 |
 
-<p align="center"><img src="../docs/assets/worldsim/05-vehicles.png" width="560" alt="十种交通工具立绘"></p>
+<p align="center"><img src="../docs/assets/worldsim/06-vehicles.png" width="640" alt="十种交通工具立绘"></p>
 
 > ⚠️ **状态：开发中**，**真机运行验证尚未完成**，APK 构建暂时搁置。
 > 上面的图是**后端真实渲染的地图**套上合成外壳（手机上跑不了浏览器截图）—— 地图内容是真的。
