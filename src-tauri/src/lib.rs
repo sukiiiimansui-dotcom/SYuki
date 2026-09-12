@@ -570,6 +570,11 @@ pub fn run() {
             world_map::world_map_transport_plan,
             world_map::world_map_osm_summary,
             world_map::world_map_time,
+            // ── 应用内实时绘制（Channel 版；浏览器/调试服务的 SSE 路并存）──
+            // 必须带 bridge:: 前缀：命令宏在**定义处**（world_map/bridge.rs）生成
+            // __cmd__xxx 并 pub use，generate_handler 按同名路径找宏（见 mod.rs 的说明）
+            world_map::bridge::world_map_district_stream,
+            world_map::bridge::world_map_district_stream_cancel,
             utils::log_bridge::get_log_history,
             utils::log_bridge::open_log_window,
             utils::log_bridge::is_log_window_open,

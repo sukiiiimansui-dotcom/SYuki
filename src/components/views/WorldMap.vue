@@ -17,6 +17,12 @@
       <button class="wm-btn" :disabled="loading" @click="relocate">📍 按定位</button>
       <button class="wm-btn" title="把这张地图叠到聊天界面上" @click="toOverlay">▤ 叠加为背景</button>
       <button class="wm-btn" title="缩成右下角小窗" @click="toCorner">▢ 角落小窗</button>
+      <!-- 子页面入口：与其把主菜单塞满，不如从地图页进 -->
+      <span class="wm-spacer" />
+      <button class="wm-btn" title="看 AI 逐栋实时画出这个小区" @click="router.push('/world/district-live')">✎ 实时绘制</button>
+      <button class="wm-btn" title="数据可视化 / 图层开关 / 伪 3D" @click="router.push('/world/district-viz')">▦ 可视化</button>
+      <button class="wm-btn" title="地图库：缓存的地图与布局" @click="router.push('/world/maplib')">🗂 地图库</button>
+      <button class="wm-btn" title="手机悬浮窗形态预览" @click="router.push('/world/phone-overlay')">📱 手机窗</button>
     </div>
 
     <!-- 地图舞台 -->

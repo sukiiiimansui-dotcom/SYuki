@@ -75,6 +75,32 @@ pub fn overpass_query(lat: f64, lng: f64, radius_m: f64, kinds: &[String]) -> St
     format!("[out:json][timeout:40];({parts});out center tags;")
 }
 
+/// 极简 `application/x-www-form-urlencoded` 编码。
+///
+/// 为什么不用 `reqwest` 的 `.form()`：reqwest 0.13 把它挪到了 `form` feature 后面，
+/// 而宿主工程（LingChat）没有开这个 feature —— 为一行请求去改官方依赖不值得，
+/// 而 Overpass 的请求体本来就只有一个 `data=` 字段，自己编码更省事也更可控。
+fn form_encode(pairs: &[(&str, &str)]) -> String {
+    let pct = |s: &str| -> String {
+        let mut o = String::new();
+        for b in s.as_bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    o.push(*b as char)
+                }
+                b' ' => o.push('+'),
+                _ => o.push_str(&format!("%{b:02X}")),
+            }
+        }
+        o
+    };
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", pct(k), pct(v)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 /// 缓存文件路径
 pub fn cache_path(dir: impl AsRef<Path>, key: &str) -> PathBuf {
     dir.as_ref().join(format!("{key}.json"))
@@ -126,7 +152,8 @@ pub async fn fetch_area(
         let resp = client
             .post(ep)
             .header("User-Agent", "LSYuki-maps/1.0")
-            .form(&[("data", q.as_str())])
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(form_encode(&[("data", q.as_str())]))
             .send()
             .await;
         let j = match resp {
@@ -383,6 +410,20 @@ mod tests {
         std::fs::write(cache_path(&dir, &key), "{\"elements\":[]}").unwrap();
         assert!(load_cached(&dir, &key).is_none(), "小于 50 字节的残file应忽略");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn form_encode_escapes_overpass_query() {
+        // Overpass 的查询里有 [] " ; : , 这些字符，编码错就会被 400 拒掉
+        let q = "[out:json][timeout:40];(way[\"building\"](around:400,29.75,107.28););out center tags;";
+        let body = form_encode(&[("data", q)]);
+        assert!(body.starts_with("data="));
+        assert!(body.contains("%5Bout%3Ajson%5D"), "方括号与冒号要转义: {body}");
+        assert!(body.contains("%22building%22"), "引号要转义");
+        assert!(!body.contains(' '), "空格不能原样出现");
+        // 空格按 form 规则编码成 +（%20 也合法，但 + 更省字节）
+        assert_eq!(form_encode(&[("a", "b c")]), "a=b+c");
+        assert_eq!(form_encode(&[("a", "1"), ("b", "2")]), "a=1&b=2");
     }
 
     #[test]

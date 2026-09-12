@@ -1,7 +1,7 @@
 // 纯 web 预览 mock：伪造 Tauri __TAURI_INTERNALS__，让 LingChat 在无 Rust 后端也能启动渲染 UI。
 // getCurrentWindow 读 metadata.currentWindow.label；invoke 按命令返回模拟数据（B站学习/网易云用示例，其余返回空）。
 declare global {
-  interface Window { __TAURI_INTERNALS__?: any }
+  interface Window { __TAURI_INTERNALS__?: any; __LINGCHAT_WEB_MOCK__?: boolean }
 }
 
 let cbId = 0
@@ -113,6 +113,10 @@ function mockResult(cmd: string): any {
 
 export function installWebMock() {
   if (window.__TAURI_INTERNALS__) return
+  // 明确标记「这是伪造的 Tauri 环境」：光看 __TAURI_INTERNALS__ 存在与否
+  // 区分不出「真壳」和「纯 web 预览」。世界地图的实时绘制要靠它选通路
+  // （真壳走 Tauri Channel，纯 web 走 EventSource），标错了会一直转圈。
+  window.__LINGCHAT_WEB_MOCK__ = true
   window.__TAURI_INTERNALS__ = {
     invoke: (cmd: string, args?: any) => Promise.resolve(mockResult(cmd)),
     transformCallback: (cb: any) => { cbId += 1; return cbId },

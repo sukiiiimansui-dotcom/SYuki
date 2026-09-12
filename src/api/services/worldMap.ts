@@ -4,7 +4,7 @@
 //   · 现在：HTTP → Python 侧车服务（127.0.0.1:8790，runit 常驻）
 //   · T6-5 完成后：切到 Tauri invoke（Rust 本地实现）
 // 切换只需把 USE_RUST 改 true 并补 world_map_* 命令。
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 
 /** 是否已切到 Rust 本地实现（T6-5） */
 export const USE_RUST = false
@@ -503,6 +503,222 @@ export function fmtBytes(bytes: number): string {
 /** 稳定 id → 便于给列表做 key（后端 id 已含冒号，这里只做兜底转义） */
 export function safeId(id: string): string {
   return String(id || '').replace(/[^\w:.-]/g, '_')
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AI 实时绘制小区：**统一入口**（Tauri Channel / 浏览器 EventSource）
+//
+// 为什么需要它：DistrictLive 页面原来自己 `new EventSource(...)` 连
+// http://127.0.0.1:8791/api/district_stream —— 那是独立 Rust 调试服务的地址，
+// 打包成 APK 后手机上根本没有那个进程，那条路必然失败。应用内要走
+// 「Tauri 命令 + IPC Channel」：Rust 侧 `world_map_district_stream` 用 LingChat
+// 自己的 LLM 客户端（设置页里配的那个，支持热切换）流式生成，每抠出一个元素就
+// send 一条。事件形状与 SSE 的 data 行**逐字段一致**（Rust 侧同一个
+// `Event::to_json`），所以页面那套阶段条/日志/增量画/对账逻辑两条路都能用。
+//
+// 生命周期：返回「停止」函数，必须在组件卸载、重画、点「停止」时调用 ——
+// EventSource 是长连接，Tauri 那边是一个后台任务，不停掉的话页面切走了还在画。
+//
+// 注：这里**不另立** `DistrictStreamEvent` —— 上面（`districtStreamUrl` 附近）已经
+// 导出过它，两条通路的负载字段完全一致，直接复用；同名 interface 重复声明会
+// TS2300，也会让页面拿到两套互不相容的类型。
+// ═══════════════════════════════════════════════════════════════════
+
+/** 强制指定实时绘制通路（调试/录屏用）：`window.__WM_DISTRICT_TRANSPORT__ = 'tauri' | 'http'` */
+export type DistrictTransport = 'tauri' | 'http'
+
+declare global {
+  interface Window {
+    __WM_DISTRICT_TRANSPORT__?: DistrictTransport
+    /** 纯 web 预览标记，由 src/web-mock.ts 打上 */
+    __LINGCHAT_WEB_MOCK__?: boolean
+  }
+}
+
+/**
+ * 这一轮该走哪条通路。
+ *
+ * ① 先看显式开关（`__WM_DISTRICT_TRANSPORT__`），调试时可强制走某一条；
+ * ② 再看 `window.__TAURI_INTERNALS__`（真壳由 Rust 注入，项目里判断 Tauri 就是这么判的）；
+ * ③ 但**纯 web 预览**时 `src/web-mock.ts` 会伪造一份 `__TAURI_INTERNALS__`，它的 invoke
+ *    对 `world_map_*` 一律返回 undefined（等价于「命令不存在」）—— 那样页面会永远停在
+ *    「连接中…」，所以用 mock 自己打的 `__LINGCHAT_WEB_MOCK__` 标记把它排除，让它退回 EventSource。
+ */
+function useTauriTransport(): boolean {
+  if (typeof window === 'undefined') return false // 非浏览器环境（SSR / 测试）兜底
+  const forced = window.__WM_DISTRICT_TRANSPORT__
+  if (forced === 'tauri') return true
+  if (forced === 'http') return false
+  if (!window.__TAURI_INTERNALS__) return false
+  return !window.__LINGCHAT_WEB_MOCK__
+}
+
+/** invoke 的 reject 有的是 string（Rust 的 `Err(String)`），有的是 Error，统一成人话 */
+function errText(e: unknown): string {
+  if (typeof e === 'string') return e
+  if (e instanceof Error) return e.message
+  return e ? String(e) : '未知错误'
+}
+
+/** Tauri 分支：命令 + Channel（应用内正路） */
+function startTauriDistrictStream(
+  opts: DistrictStreamOpts,
+  onEvent: (ev: DistrictStreamEvent) => void,
+  onDone?: () => void,
+  onError?: (msg: string) => void,
+): () => void {
+  let stopped = false
+  // 唯一 id：Rust 侧靠它把「停止」找回对应的后台任务（见 world_map_district_stream_cancel）。
+  // 时间戳 + 随机串足够：同一页面连点「重画」也不会撞。
+  const streamId = `district-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  const channel = new Channel<DistrictStreamEvent>()
+  channel.onmessage = (ev) => {
+    if (stopped) return
+    onEvent(ev)
+    // done = 这一轮正常收尾。放在 onEvent 之后，先让调用方把布局对账完再收摊。
+    if (ev.type === 'done') {
+      stopped = true
+      onDone?.()
+    }
+  }
+
+  // 注意：命令**立刻返回**，真正的生成在 Rust 后台任务里跑，事件全部走 channel ——
+  // 所以绝不能拿这个 invoke 的 resolve 当「画完了」（它只是「任务挂起来了」）。
+  invoke('world_map_district_stream', {
+    area: opts.area,
+    context: opts.context ?? null,
+    expand: opts.expand ?? 0,
+    streamId,
+    onEvent: channel,
+  }).catch((e) => {
+    if (stopped) return
+    stopped = true
+    // 命令本身失败（旧版 APK 没注册这个命令 / Channel 传参不被识别 / 参数反序列化失败…）：
+    // 转成可读文案交给页面，别让异常冒到控制台就没了
+    onError?.(`实时绘制命令调用失败：${errText(e)}`)
+  })
+
+  return () => {
+    if (stopped) return
+    stopped = true
+    // 先本地挂断（此后迟到的事件一律丢弃），再让 Rust 把这一轮停掉。
+    // 取消是「尽力而为」：任务可能刚好自己跑完了，失败不影响任何东西。
+    invoke('world_map_district_stream_cancel', { streamId }).catch(() => {})
+  }
+}
+
+/** 浏览器分支：沿用 EventSource（Rust 调试服务 8791 / 将来别的 HTTP 后端） */
+function startHttpDistrictStream(
+  opts: DistrictStreamOpts,
+  onEvent: (ev: DistrictStreamEvent) => void,
+  onDone?: () => void,
+  onError?: (msg: string) => void,
+): () => void {
+  let es: EventSource
+  try {
+    es = new EventSource(districtStreamUrl(opts))
+  } catch (e) {
+    onError?.(`无法打开实时连接：${errText(e)}`)
+    return () => {} // 连都没连上，停止函数给个空的即可
+  }
+  let stopped = false
+  let received = 0
+  const close = () => {
+    try {
+      es.close()
+    } catch {
+      /* 已经关了就算了 */
+    }
+  }
+
+  es.onmessage = (e) => {
+    if (stopped) return
+    const raw = String(e.data ?? '')
+    if (raw === '[DONE]') {
+      stopped = true
+      close()
+      onDone?.()
+      return
+    }
+    let ev: DistrictStreamEvent
+    try {
+      ev = JSON.parse(raw) as DistrictStreamEvent
+    } catch {
+      // 坏片段照旧只记一条日志（页面把它当 warn 显示），不打断整条流
+      onEvent({ type: 'warn', message: '收到无法解析的流片段（已跳过）' })
+      return
+    }
+    received++
+    onEvent(ev)
+  }
+
+  es.onerror = () => {
+    if (stopped) return
+    // 两种情况必须分开（原来在页面里判的，现在判完只交给调用方一句话）：
+    //   ① 后端没配 LLM 时这个路由回的是 **JSON**（不是 text/event-stream），
+    //      浏览器按规范把连接判死（readyState=CLOSED）→ 再 fetch 一次把 JSON 里的
+    //      error 读出来给用户看（这条路径后端不会调 LLM，不花钱）；
+    //   ② 网络/服务问题 → 浏览器会一直重连，必须我们主动 close，否则页面看起来卡死。
+    const wasClosed = es.readyState === EventSource.CLOSED
+    const got = received
+    stopped = true
+    close()
+    if (got > 0) {
+      // 已经画出一部分了：交给调用方按「中断」收尾（保留已画的内容）
+      onError?.('连接中断')
+      return
+    }
+    if (!wasClosed) {
+      onError?.(`连不上实时绘制服务（${API_BASE} 未启动或被拦）`)
+      return
+    }
+    void probeStreamError(opts).then((reason) => onError?.(reason))
+  }
+
+  return () => {
+    if (stopped) return
+    stopped = true
+    close()
+  }
+}
+
+/**
+ * 读「为什么开不了流」：只取 JSON 错误；如果拿到的其实是 SSE，
+ * 立刻 abort —— 否则等于白白多跑一次生成（后端一进这个路由就会调 LLM）。
+ */
+async function probeStreamError(opts: DistrictStreamOpts): Promise<string> {
+  try {
+    const ctrl = new AbortController()
+    const res = await fetch(districtStreamUrl(opts), { cache: 'no-store', signal: ctrl.signal })
+    const ct = res.headers.get('content-type') || ''
+    if (!ct.includes('json')) {
+      ctrl.abort()
+      return '后端拒绝了流式连接（返回内容不是 SSE）'
+    }
+    const j = (await res.json()) as { error?: string; hint?: string }
+    return j.error || j.hint || `后端返回 ${res.status}`
+  } catch (e) {
+    return `读取失败原因时又出错：${errText(e)}`
+  }
+}
+
+/**
+ * 实时绘制小区：**统一入口**，页面只调这一个函数。
+ *
+ * @param opts    区域 / 剧情提示 / 规模档位（base = 20 + expand×8）
+ * @param onEvent 每一条流事件（形状见 `DistrictStreamEvent`，两条通路一致）
+ * @param onDone  流正常收尾（浏览器版是 `[DONE]`；Tauri 版是 `done` 事件之后）
+ * @param onError 连不上 / 中途断了 / 命令调用失败，参数是给人看的一句话
+ * @returns 停止函数（幂等）：组件卸载、重画、点「停止」时都要调
+ */
+export function startDistrictStream(
+  opts: { area: string; context?: string; expand?: number },
+  onEvent: (ev: DistrictStreamEvent) => void,
+  onDone?: () => void,
+  onError?: (msg: string) => void,
+): () => void {
+  if (useTauriTransport()) return startTauriDistrictStream(opts, onEvent, onDone, onError)
+  return startHttpDistrictStream(opts, onEvent, onDone, onError)
 }
 
 export default worldMapApi

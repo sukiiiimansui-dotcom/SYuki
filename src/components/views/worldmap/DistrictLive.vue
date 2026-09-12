@@ -2,7 +2,9 @@
   AI 实时绘制小区（移植自 Python 原型的 district_live.html）
 
   和后端别的接口最大的不同：**这个页面看的是「过程」而不是「结果」**。
-  走 /api/district_stream 的 SSE，AI 每吐出一栋楼就立刻画一栋，
+  数据统一从 startDistrictStream() 来：应用内走 Tauri 命令 + Channel（APK 里没有
+  127.0.0.1:8791 那个 Rust 调试服务，EventSource 必然连不上），浏览器里退回 SSE；
+  两条路的事件形状逐字段一致，AI 每吐出一栋楼就立刻画一栋，
   所以这里的核心约束是「增量」：绝不能每来一条事件就重渲染整张 SVG。
 
   增量怎么做的（对应下面 appendBuilding/appendRoad/appendArea 的调用点）：
@@ -110,7 +112,7 @@
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import worldMapApi, {
-  districtStreamUrl,
+  startDistrictStream,
   type DistrictItem,
   type DistrictLayout,
   type DistrictRoadItem,
@@ -159,7 +161,12 @@ const hasSvg = ref(false)
 const stageHost = ref<HTMLElement | null>(null)
 let stage: Stage | null = null
 let scale: Scale = makeScale(20)
-let es: EventSource | null = null
+/**
+ * 停止函数（startDistrictStream 返回，幂等）。
+ * 不管这条流是 Tauri Channel 还是 EventSource，页面只认这一个句柄：
+ * 重画/卸载/点停止都必须调它，否则后台那一轮生成会一直跑完。
+ */
+let stopStream: (() => void) | null = null
 let tick: number | null = null
 let startedAt = 0
 /** done 之后不再重复收尾（[DONE] 与 onerror 都会走到 finish） */
@@ -218,13 +225,13 @@ function stopTimer() {
 }
 
 function closeStream() {
-  if (es) {
+  if (stopStream) {
     try {
-      es.close()
+      stopStream()
     } catch {
-      /* 已经关了就算了 */
+      /* 已经断了就算了 */
     }
-    es = null
+    stopStream = null
   }
 }
 
@@ -248,7 +255,7 @@ function reset() {
   title.value = 'AI 绘制小区'
 }
 
-/** 开始绘制：先清场、建舞台，再开 SSE */
+/** 开始绘制：先清场、建舞台，再开流（应用内 = Tauri Channel，浏览器 = SSE） */
 function start() {
   if (!stageHost.value) return
   reset()
@@ -267,32 +274,19 @@ function start() {
     elapsed.value = (Date.now() - startedAt) / 1000
   }, 200)
 
-  const url = districtStreamUrl({ area: area.value, context: context.value.trim(), expand: expand.value })
-  let source: EventSource
-  try {
-    source = new EventSource(url)
-  } catch (e) {
-    fail(`无法打开实时连接：${(e as Error)?.message || e}`)
-    return
-  }
-  es = source
-  source.onmessage = onMessage
-  source.onerror = onStreamError
+  // 事件处理与通路无关：onEvent 收流事件、onDone 正常收尾、onError 给可读原因。
+  // 打开连接失败时 onError 会被**同步**调用（此时 stopStream 还没赋值），
+  // 所以这里不用 try/catch —— 失败路径由 onStreamError → fail() 统一负责。
+  stopStream = startDistrictStream(
+    { area: area.value, context: context.value.trim(), expand: expand.value },
+    handleEvent,
+    () => finish(false),
+    (msg) => onStreamError(msg),
+  )
 }
 
-function onMessage(e: MessageEvent) {
-  const raw = String(e.data ?? '')
-  if (raw === '[DONE]') {
-    finish(false)
-    return
-  }
-  let ev: DistrictStreamEvent
-  try {
-    ev = JSON.parse(raw) as DistrictStreamEvent
-  } catch {
-    pushLog('', '⚠️ 收到无法解析的流片段（已跳过）')
-    return
-  }
+/** 单条流事件（JSON 已经由数据层解析好；[DONE] 走 onDone） */
+function handleEvent(ev: DistrictStreamEvent) {
   evCount++
   const st = stage
   if (!st) return
@@ -470,17 +464,15 @@ function fail(msg: string) {
 }
 
 /**
- * SSE 出错回调。
+ * 流出错回调（数据层已经把「为什么」翻译成一句人话了，见 worldMap.ts）。
  *
- * 两种情况必须分开处理：
- *   ① 后端没配 LLM 时，这个路由回的是 **JSON**（不是 text/event-stream）→
- *      浏览器按规范把连接判死（readyState=CLOSED），所以能靠它区分；
- *   ② 网络/服务问题 → 浏览器会一直重连，必须我们主动 close，否则页面看起来卡死。
- * ①的情况下再 fetch 一次把 JSON 里的 error 读出来给用户看（这条路径后端不会调 LLM，不花钱）。
+ * 这里只做「按已收到的量分流」：
+ *   · 一条都没收到 → 这一轮白开了，直接给出原因（含「后端未配置 LLM」那条 JSON 提示）；
+ *   · 收到过元素 → 当作中断收尾，保留已经画出来的部分。
+ * 主动 close/停止之后迟到的错误不再处理（数据层也会拦掉）。
  */
-async function onStreamError() {
+function onStreamError(msg: string) {
   if (settled) return
-  const wasClosed = es?.readyState === EventSource.CLOSED
   const received = evCount
   closeStream()
   if (received > 0) {
@@ -489,32 +481,7 @@ async function onStreamError() {
   }
   running.value = false
   stopTimer()
-  if (!wasClosed) {
-    fail('连不上实时绘制服务（http://127.0.0.1:8791 未启动或被拦）')
-    return
-  }
-  const reason = await probeError()
-  fail(reason)
-}
-
-/** 读「为什么开不了流」：只取 JSON 错误；如果拿到的其实是 SSE，立刻掐断，避免白白多跑一次生成 */
-async function probeError(): Promise<string> {
-  try {
-    const ctrl = new AbortController()
-    const res = await fetch(districtStreamUrl({ area: area.value, context: context.value.trim(), expand: expand.value }), {
-      cache: 'no-store',
-      signal: ctrl.signal,
-    })
-    const ct = res.headers.get('content-type') || ''
-    if (!ct.includes('json')) {
-      ctrl.abort()
-      return '后端拒绝了流式连接（返回内容不是 SSE）'
-    }
-    const j = (await res.json()) as { error?: string; hint?: string }
-    return j.error || j.hint || `后端返回 ${res.status}`
-  } catch (e) {
-    return `读取失败原因时又出错：${(e as Error)?.message || e}`
-  }
+  fail(msg)
 }
 
 function stop() {

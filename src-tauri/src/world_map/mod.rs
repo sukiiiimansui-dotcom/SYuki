@@ -9,6 +9,8 @@
 //!      · render_geo（行政区划渲染） · stats（统计） · stream（流式生成） · maplib（地图库）
 //!      · osm（Overpass 真实地物） · transport（交通） · schedule（日程 → 地图位置）
 //! 前端通过 `world_map_*` 命令调用；Python 侧车仍可并存（前端 `USE_RUST` 决定走哪边）。
+// 应用内实时绘制通路（Tauri 命令 + Channel）—— 只做「搬运」，生成逻辑仍复用 `stream`
+pub mod bridge;
 pub mod coord;
 pub mod details;
 pub mod facilities;
@@ -22,6 +24,15 @@ pub mod sketch;
 pub mod stats;
 pub mod stream;
 pub mod transport;
+
+// 注意：`bridge` 里的两个命令要按**完整路径**注册进 lib.rs 的 invoke_handler：
+//   world_map::bridge::world_map_district_stream / ..._cancel
+// 不能写 `world_map::world_map_district_stream` —— 命令宏除了函数本体，还会在
+// **定义它的模块里**生成 `pub use {__cmd__xxx, __tauri_command_name_xxx}`（见
+// tauri-macros/src/command/wrapper.rs 末尾「allow the macro to be resolved with the
+// same path as the command function」），generate_handler 就是拿这条路径去找宏的。
+// 在 mod.rs 里 `pub use bridge::world_map_district_stream;` **只导出函数、不导出宏**，
+// 那样写编译期直接 E0433（已用 rustc 复现验证）。
 
 use chrono::{Datelike, Timelike};
 use serde_json::{json, Value};
