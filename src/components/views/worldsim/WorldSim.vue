@@ -64,18 +64,30 @@
     <main class="ws-stage">
       <!-- ① 初始化：加载动画「正在展开世界…」 -->
       <section v-if="step === 'boot'" class="ws-center">
-        <WsLoading variant="init" text="正在展开世界…" sub="准备全国省级轮廓（只画省界）…" />
+        <!-- delay=0：这是首屏（底下没有任何内容可看），一进来就该有东西，不是「等 180ms」的场景 -->
+        <WsLoading
+          variant="init"
+          :delay="0"
+          :text="t('worldsim.loader.init.text')"
+          :sub="t('worldsim.loader.init.sub')"
+          :hint="t('worldsim.loader.init.longHint')"
+        />
       </section>
 
       <!-- ② 定位中 -->
       <section v-else-if="step === 'locating'" class="ws-center">
-        <WsLoading variant="locate" text="正在定位" :sub="gpsHint" />
+        <WsLoading
+          variant="locate"
+          :text="t('worldsim.loader.locate.text')"
+          :sub="gpsHint"
+          :hint="t('worldsim.loader.locate.longHint')"
+        />
       </section>
 
       <!-- ③ 定位失败 / 被拒：手动选城市 + 用 IP 估测，两条路都给 -->
       <section v-else-if="step === 'locateFailed'" class="ws-center">
         <div class="ws-card ws-locatefail">
-          <WsLoading variant="locate" size="sm" text="没能自动定位" :sub="note" />
+          <WsLoading variant="locate" size="sm" :text="t('worldsim.loader.locateFailed.text')" :sub="note" />
           <div class="ws-note">可以走下面任一条路，都能继续往下玩：</div>
           <div class="ws-locatefail__ops">
             <button class="ws-btn ws-btn--primary" type="button" @click="openManual('手动选择省 / 市 / 区县')">
@@ -128,9 +140,15 @@
           <button type="button" title="复位（也支持双击地图 / 双指双击）" @click="gsReset(false)">⟲</button>
         </div>
 
-        <!-- 区域切换 / 首次加载的加载动画（盖在舞台上，不销毁已有的图） -->
+        <!-- 区域切换 / 首次加载的加载动画（盖在舞台上，不销毁已有的图）
+             不给进度条：这张图是后端现画的，前端算不出百分比 —— 算不出来就**不装**确定进度 -->
         <div v-if="busy" class="ws-mapmask">
-          <WsLoading variant="map" :text="busyText || '正在加载地图'" sub="后端渲染中…" />
+          <WsLoading
+            variant="map"
+            :text="busyText || t('worldsim.loader.map.text')"
+            :sub="t('worldsim.loader.map.sub')"
+            :hint="t('worldsim.loader.map.longHint')"
+          />
         </div>
       </section>
 

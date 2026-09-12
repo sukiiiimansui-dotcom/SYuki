@@ -609,6 +609,12 @@ pub fn run() {
             world_map::event_cmd::world_map_tick,
             world_map::event_cmd::world_map_events_recent,
             world_map::event_cmd::world_map_take_pending_memory,
+            // ── 世界模拟 · 城市级**真拼接**大图（T5-1：区县街区图 → 按经纬度拼成一张大 SVG）──
+            // 前缀同样是必须的：宏在定义处 world_map/stitch_cmd.rs 生成，写
+            // `world_map::world_map_bigmap_svg` 会在编译期直接 E0433（本项目踩过）。
+            // 与 `world_map_geo_svg`（行政区划总览）是两件事，不互相替代。
+            world_map::stitch_cmd::world_map_bigmap_svg,
+            world_map::stitch_cmd::world_map_bigmap_plan,
             utils::log_bridge::get_log_history,
             utils::log_bridge::open_log_window,
             utils::log_bridge::is_log_window_open,

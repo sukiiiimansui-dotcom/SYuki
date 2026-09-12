@@ -1,0 +1,419 @@
+/* ============================================================================
+ * 「世界模拟」加载态样式（P6 升级）
+ *
+ * 为什么单独一个文件、而不是接着往 worldsim.css 里塞：
+ *   worldsim.css 是**全站皮肤**（令牌 + 外壳 + 各种零件），它正在被并行改动；
+ *   加载态这一块要能被单独 review、单独回滚，所以所有新类名/关键帧都放这里。
+ *   组件只 import 这一个文件（见 WsLoading.vue 顶部的 import）。
+ *
+ * 四条硬纪律（自检脚本会逐条静态验证，见 frontend_selftest_worldsim_p1.mjs 末尾）：
+ *   ① **只动 transform / opacity**：GPU 合成，不触发重排/重画。
+ *      不许出现动 width/height/top/left/margin/box-shadow/background-position/content 的动画
+ *      （`content` 那条有前车之鉴：ws-dots 曾经每 350ms 改一次文本 → 每 350ms 重排一次）。
+ *   ② `prefers-reduced-motion: reduce` 下**全部停掉**，只留纯 opacity 的淡入。
+ *   ③ `.ws-root.ws-perf-low`（低端机档位）下装饰性无限动画全部停掉，
+ *      只留纯 opacity 的「还在动」反馈（与 worldsim.css 里那条既有规则同一个口径）。
+ *   ④ 关键帧一律 `ws-load-` 前缀，不跟 LingChat 原有动画（以及 worldsim.css 的 ws-*）撞名。
+ *
+ * 配色一律走变量：文字/细线用 `--ws-primary-ink`（主色当文字时对比度只有 1.6~2.1，
+ * 读不出来），面填充才用 `--ws-primary`。三套主题（薄荷 / 毛玻璃 / 深色）都不用改这里。
+ * ========================================================================== */
+
+/* ── 根：延迟显示（< delayMs 什么都不显示，但**保留占位**，避免出现时把布局顶一下）── */
+.ws-loading--idle {
+  visibility: hidden;
+}
+/* 显示出来的那一下是淡入，不是「啪」地弹出（只动 opacity + 位移 4px） */
+.ws-loading--in {
+  animation: ws-load-in 0.3s ease both;
+}
+/* 100ms~1s 的轻提示：**不转、不闪**，只是一张安静的小插画 ——
+ * 这一档本来就快到看不见，给它加动效只会显得系统很忙。 */
+.ws-loading--brief .ws-loading__art {
+  transform: scale(0.8);
+  opacity: 0.9;
+}
+.ws-loading--brief .ws-anim-spin,
+.ws-loading--brief .ws-anim-spin-rev,
+.ws-loading--brief .ws-anim-radar,
+.ws-loading--brief .ws-anim-ring,
+.ws-loading--brief .ws-anim-draw,
+.ws-loading--brief .ws-anim-float {
+  animation: none;
+}
+/* 细线用 ink 色（对底色可读），面填充仍用 --ws-primary（见各 SVG 的 fill） */
+.ws-loading__art {
+  color: var(--ws-primary-ink, var(--ws-primary));
+}
+
+/* ── 附加信息区（进度条 / 阶段 / 已等多久 / 安心话 / 停止）────────────────────
+ * 单独一层是为了 `--inline`（横排小尺寸）时能整块换行，而不是把指示器挤扁。 */
+.ws-loading__extra {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5em;
+  width: 100%;
+  min-width: 0;
+}
+.ws-loading--inline .ws-loading__extra {
+  align-items: flex-start;
+  flex-basis: 100%;
+  text-align: left;
+}
+
+/* ── 进度条：确定态走 transform: scaleX()，不确定态走一层平移的高光 ───────────── */
+.ws-loading__bar {
+  position: relative;
+  width: min(17em, 82%);
+  height: 0.36em;
+  border-radius: 999px;
+  background: var(--ws-primary-soft);
+  overflow: hidden;
+}
+.ws-loading__bar > i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--ws-primary-ink, var(--ws-primary));
+  transform: scaleX(var(--ws-prog, 0));
+  transform-origin: 0 50%;
+  transition: transform 0.4s ease;
+}
+/* 进度条已经渲染但这一档还不该显示它：留位、不画（避免出现时把下面的内容顶下去） */
+.ws-loading__bar.is-hidden {
+  visibility: hidden;
+}
+/* 不确定态：能算就给确定进度，算不出来（样本不足/总量未知）就**明说不知道**，
+ * 不要拿一个假百分比糊弄。 */
+.ws-loading__bar.is-indet > i {
+  width: 38%;
+  transform: none;
+  background: linear-gradient(90deg, transparent 0%, var(--ws-primary-ink, var(--ws-primary)) 50%, transparent 100%);
+  animation: ws-load-sweep 1.5s ease-in-out infinite;
+}
+
+/* ── 阶段条（构思布局 → 落建筑 → 铺路绿化 → 收尾）───────────────────────── */
+.ws-loading__stages {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.3em 0.4em;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.82em;
+  color: var(--ws-fg-dim);
+}
+.ws-loading__stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34em;
+  padding: 0.1em 0.55em;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.ws-loading__stage::before {
+  content: '';
+  width: 0.42em;
+  height: 0.42em;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.3;
+}
+.ws-loading__stage.is-done {
+  opacity: 0.75;
+}
+.ws-loading__stage.is-done::before {
+  opacity: 0.55;
+}
+.ws-loading__stage.is-now {
+  color: var(--ws-primary-ink, var(--ws-primary));
+  background: var(--ws-primary-soft);
+}
+.ws-loading__stage.is-now::before {
+  opacity: 1;
+  animation: ws-load-dot 1.6s ease-in-out infinite;
+}
+.ws-loading__stage.is-todo::before {
+  opacity: 0.18;
+}
+
+/* ── 元信息行（已等 N 秒 / 约还需 N 秒（估算） / N 项每秒）─────────────────────
+ * tabular-nums：数字等宽，秒数从 9 跳到 10 时那一行不会左右抖（那也是一种 layout shift）。 */
+.ws-loading__meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.2em 0.7em;
+  min-height: 1.2em;
+  font-size: 0.82em;
+  color: var(--ws-fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ws-loading__meta b {
+  font-weight: 600;
+  color: var(--ws-primary-ink, var(--ws-fg));
+}
+.ws-loading__meta .is-est {
+  opacity: 0.85;
+}
+
+/* ── 长任务的那句安心话（**如实**：切走会中断就别写「回来还能接着看」）──────── */
+.ws-loading__hint {
+  max-width: 24em;
+  margin: 0;
+  font-size: 0.8em;
+  line-height: 1.45;
+  color: var(--ws-fg-dim);
+  animation: ws-load-fade 0.3s ease both;
+}
+
+/* ── 停止 / 取消：长任务必须**始终可见可点**，所以它比普通按钮更显眼一点 ──────── */
+.ws-loading__ops {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5em;
+}
+.ws-loading__cancel {
+  min-height: 2.1em;
+  padding: 0.42em 1.5em;
+  font-weight: 600;
+  color: var(--ws-primary-ink, var(--ws-fg));
+  border-color: var(--ws-primary-ink, var(--ws-border));
+}
+.ws-loading__cancel:hover:not(:disabled) {
+  background: var(--ws-primary-soft);
+}
+
+/* ── 骨架屏 ───────────────────────────────────────────────────────────────
+ * 判据是「结构是否已知」：已知结构才用骨架（灰块先占位，内容回来形状不跳）。
+ * ⚠️ 形状必须贴近真内容 —— 行高/内边距/行数照抄真实列表项（见 WsPicker 的
+ *    `.ws-pick__item`：font-size .92em / padding .3em .5em / border 1px / 行高 1.5）。
+ *    对不上的话内容一到就会跳版，那正是骨架屏被骂的原因。 */
+.ws-loading__sk {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  width: 100%;
+  min-width: 0;
+}
+.ws-loading__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.ws-sk {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--ws-radius-sm);
+  /* 错峰进场：--ws-i 由模板按行号给（0,1,2…），每行晚 36ms。
+   * 上限用 nth-child 兜住（见文件末尾的 .ws-stagger 那段），后面几十行不会有夸张延迟。 */
+  animation: ws-load-in 0.28s ease both;
+  animation-delay: calc(var(--ws-i, 0) * 36ms);
+}
+/* 单行骨架：**照抄** .ws-pick__item 的盒模型（行高/内边距/边框），这样真内容回来高度不变。
+ * min-height 1.5em = 真实文本那一行的 line-height（`.ws-root` 里定义 1.5）。 */
+.ws-sk--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4em;
+  min-height: 1.5em;
+  padding: 0.3em 0.5em;
+  font-size: 0.92em;
+  border: 1px solid transparent;
+}
+.ws-sk__a,
+.ws-sk__b {
+  display: block;
+  height: 0.86em;
+  border-radius: 999px;
+  background: var(--ws-primary-soft);
+}
+.ws-sk__a {
+  width: calc(var(--ws-w, 0.8) * 62%);
+}
+.ws-sk__b {
+  width: 3.4em;
+  flex: none;
+}
+/* 高光扫过：走 ::after + translateX（**不是** background-position：
+ * 动 background-position 每帧都要重画那一块渐变）。 */
+.ws-sk::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, var(--ws-panel-2) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: ws-load-shimmer 1.7s linear infinite;
+  animation-delay: calc(var(--ws-i, 0) * 90ms);
+}
+
+/* ── 内容到达：交叉淡入 / 错峰进场（给页面级列表用的通用小工具）──────────────
+ * `<Transition name="ws-swap">` 直接用这四个类；错峰用 `.ws-stagger`（纯 CSS，不用 JS 算延时）。
+ * `.ws-swap-leave-active` 把离开的元素**移出文档流**（absolute）：
+ * 骨架淡出的同时真内容已经在原位上淡入，两者重叠而不是「先空一下再出现」——
+ * 这就是「交叉淡入不跳版」的做法（离开元素还在流里的话，两段内容会同时占位、高度抖一下）。 */
+.ws-swap-enter-active {
+  transition: opacity 0.24s ease, transform 0.24s ease;
+}
+.ws-swap-leave-active {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  transition: opacity 0.18s ease;
+}
+.ws-swap-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.ws-swap-leave-to {
+  opacity: 0;
+}
+.ws-stagger > * {
+  animation: ws-load-in 0.3s ease both;
+  animation-delay: calc(var(--ws-i, 0) * 36ms);
+}
+.ws-stagger > *:nth-child(1) { --ws-i: 0; }
+.ws-stagger > *:nth-child(2) { --ws-i: 1; }
+.ws-stagger > *:nth-child(3) { --ws-i: 2; }
+.ws-stagger > *:nth-child(4) { --ws-i: 3; }
+.ws-stagger > *:nth-child(5) { --ws-i: 4; }
+.ws-stagger > *:nth-child(6) { --ws-i: 5; }
+.ws-stagger > *:nth-child(7) { --ws-i: 6; }
+.ws-stagger > *:nth-child(8) { --ws-i: 7; }
+.ws-stagger > *:nth-child(9) { --ws-i: 8; }
+.ws-stagger > *:nth-child(10) { --ws-i: 9; }
+.ws-stagger > *:nth-child(11) { --ws-i: 10; }
+.ws-stagger > *:nth-child(n + 12) { --ws-i: 11; }
+
+/* ── 关键帧：只有 transform / opacity ─────────────────────────────────────── */
+@keyframes ws-load-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes ws-load-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes ws-load-sweep {
+  from { transform: translateX(-110%); }
+  to   { transform: translateX(300%); }
+}
+@keyframes ws-load-shimmer {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+@keyframes ws-load-dot {
+  0%, 100% { opacity: 0.45; transform: scale(0.82); }
+  50%      { opacity: 1;    transform: scale(1.12); }
+}
+
+/* 地图遮罩上的那一块：给指示器一张**自己的底卡**。
+ * 为什么需要：遮罩是半透明 + 1.5px 模糊，底下是地图（浅色海面/深色底都有），
+ * 没有底卡时那圈等高线在浅色地图上几乎看不见（实测截图确认），
+ * 加了底卡以后三套主题、三种地图风格下都读得清。 */
+.ws-mapmask .ws-loading {
+  padding: 0.9em 1.4em;
+  background: var(--ws-panel);
+  border: 1px solid var(--ws-border);
+  border-radius: var(--ws-radius);
+  box-shadow: var(--ws-shadow);
+  backdrop-filter: blur(var(--ws-blur));
+  -webkit-backdrop-filter: blur(var(--ws-blur));
+}
+
+/* ── 长任务的容器：小区图的进度卡（WsDistrict 的 .ws-prog）────────────────────
+ * 卡片是 absolute 钉在小区图右上角的，内容一多就会超出屏幕（手机横屏只有 ~430px 高）。
+ * 这条规则的唯一目的是：**「停止」按钮在任何尺寸下都还在屏幕上、还点得到**。
+ * 用 `.ws-dist .ws-prog`（而不是单个类）是为了在层叠里稳赢 worldsim.css 里的 `.ws-prog`
+ * —— 那个文件不归本次改动管，谁的样式后加载不该决定按钮能不能点。 */
+.ws-dist .ws-prog {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  max-height: calc(100% - 1.6em);
+  max-width: min(23em, 72%);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+/* 卡片里空间小：把 WsLoading 的外边距收紧（它默认是给整屏用的） */
+.ws-dist .ws-prog .ws-loading {
+  gap: 0.5em;
+  padding: 0.15em 0;
+}
+.ws-dist .ws-prog .ws-loading__meta {
+  font-size: 0.8em;
+}
+/* 停止按钮钉在卡片底部：卡片再长也点得到（长任务必须始终有出口） */
+.ws-prog .ws-loading__ops {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: 0.25em 0 0.1em;
+  background: var(--ws-panel);
+  border-radius: var(--ws-radius-sm);
+  backdrop-filter: blur(var(--ws-blur));
+  -webkit-backdrop-filter: blur(var(--ws-blur));
+}
+
+/* ── 降级①：系统「减少动态效果」────────────────────────────────────────────
+ * 全部停掉，只留纯 opacity 的淡入 —— 内容到达仍然是「淡入」而不是硬切，
+ * 但对前庭功能敏感的人不会有任何位移/旋转/扫光。 */
+@media (prefers-reduced-motion: reduce) {
+  .ws-loading *,
+  .ws-loading *::before,
+  .ws-loading *::after,
+  .ws-root .ws-loading *,
+  .ws-root .ws-loading *::before,
+  .ws-root .ws-loading *::after,
+  .ws-stagger > * {
+    animation: none !important;
+    transition: none !important;
+  }
+  /* 唯一保留：纯 opacity 的淡入（不位移、不缩放、不扫光）。
+   * ⚠️ 这几条必须带上 `.ws-root` 前缀：上面那条杀手规则里也有 `.ws-root .ws-loading *`
+   * （特异性 0,2,0），同权重时靠「后出现」决胜 —— 实测漏掉前缀时 `.ws-loading__hint`
+   * 会被杀成 none（浏览器里量过 getComputedStyle，见 chk/verify-loading.mjs）。 */
+  .ws-loading--in,
+  .ws-root .ws-loading--in,
+  .ws-loading .ws-loading__hint,
+  .ws-root .ws-loading__hint,
+  .ws-loading__sk .ws-sk,
+  .ws-root .ws-loading__sk .ws-sk {
+    animation: ws-load-fade 0.18s ease both !important;
+  }
+}
+
+/* ── 降级②：低端机档位（wsPerf 判定后给 .ws-root 打上 ws-perf-low）──────────
+ * 装饰性无限动画（转经线 / 雷达 / 等高线 / 画笔 / 骨架扫光 / 阶段点）全部停掉，
+ * 只留纯 opacity 的「还在动」反馈 —— 那是**功能反馈**，停了用户会以为卡死。 */
+.ws-root.ws-perf-low .ws-loading *,
+.ws-root.ws-perf-low .ws-loading *::before,
+.ws-root.ws-perf-low .ws-loading *::after,
+.ws-root.ws-perf-low .ws-stagger > * {
+  animation: none;
+  transition: none;
+}
+.ws-root.ws-perf-low .ws-loading .ws-anim-breathe {
+  animation: ws-breathe 2.6s ease-in-out infinite;
+}
+.ws-root.ws-perf-low .ws-loading .ws-loading__stage.is-now::before {
+  animation: ws-load-dot 2.2s ease-in-out infinite;
+}
+/* 低端机上进度条不做 0.4s 缓动（每一帧合成一次的收益不如让指针跟手） */
+.ws-root.ws-perf-low .ws-loading__bar > i {
+  transition: none;
+}

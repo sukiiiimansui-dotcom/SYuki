@@ -75,10 +75,45 @@ jobs:
 
       # 必须是 **debug** 包：`tauri android build --apk` 默认出的是 **release**，
       # 而我们没有配置签名 → 未签名 APK **装不上手机**（`adb install` 直接报
-      # INSTALL_PARSE_FAILED_NO_CERTIFICATES）。`-d` 出的 debug 包用 debug keystore 签名，
-      # 可以直接安装试用。官方 package.json 里的 `android:devbuild` 也是这个写法。
+      # INSTALL_PARSE_FAILED_NO_CERTIFICATES）。
       - name: Build APK (debug)
         run: node scripts/prepare-bundled-resources.mjs 9 && pnpm tauri android build -d -t aarch64 --apk
+
+      # ⚠️ 必须用**和 release 同一把密钥**重签（2026-09-13 加）
+      #
+      # 起因：机主手机上已经装着以前打的那个 `com.syuki.lingchat`（用 Secrets 里的
+      # `upload-keystore.p12` 签的）。而 Gradle 给 debug 包自动签的是
+      # **Android Debug** 密钥 —— 两把密钥不同，Android 直接拒装：
+      #     INSTALL_FAILED_UPDATE_INCOMPATIBLE（签名不一致）
+      #
+      # 解法不是「先卸载旧的」（那会丢掉应用数据），而是**让 debug 包也用同一把密钥签** ——
+      # 签名一致就能直接覆盖安装、数据保留。
+      #
+      # 与 `build-android.yml` 用同一份 secrets 和同一套 apksigner 流程，
+      # 只是这里签的是 debug 产物；apksigner 会**替换**掉 Gradle 的调试签名。
+      - name: 用 release 密钥重签 debug 包（签名一致才能覆盖安装）
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+        run: |
+          set -e
+          if [ -z "${{ secrets.ANDROID_KEY_BASE64 }}" ]; then
+            echo "::warning::没有 ANDROID_KEY_BASE64 这个 secret，跳过重签 —— 装的时候需要先卸载旧版"
+            exit 0
+          fi
+          echo "${{ secrets.ANDROID_KEY_BASE64 }}" | base64 -d > "$HOME/upload-keystore.p12"
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner 2>/dev/null | head -1)
+          echo "apksigner: $APKSIGNER"
+          for apk in $(find src-tauri/gen/android/app/build/outputs/apk -name '*.apk'); do
+            echo "── 重签 $apk"
+            "$APKSIGNER" sign \
+              --ks "$HOME/upload-keystore.p12" \
+              --ks-key-alias "${{ secrets.ANDROID_KEY_ALIAS }}" \
+              --ks-pass "pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+              --key-pass "pass:${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+              "$apk"
+            "$APKSIGNER" verify --print-certs "$apk" | head -6
+          done
+          rm -f "$HOME/upload-keystore.p12"   # 别把密钥留在 runner 上
 
       - name: 列出产物（排障用：路径不对时能一眼看出）
         run: find src-tauri/gen/android/app/build/outputs -name '*.apk' -exec ls -la {} \;

@@ -23,7 +23,14 @@
         <!-- ① 本地草图层（后端 sketch：确定性、毫秒级、不调 LLM） -->
         <div class="ws-neigh__layer" :class="{ 'is-out': aiVisible }">
           <img v-if="sketchUrl" :src="sketchUrl" :alt="`${area} 小区草图`" />
-          <WsLoading v-else-if="sketchLoading" variant="map" text="正在画小区草图…" sub="本地规则生成，通常不到 1 秒" />
+          <!-- 草图通常 <1s 就回来了：靠 WsLoading 的 180ms 延迟兜住 ——
+               快到看不见的时候**一个转圈都不该闪**（那比不显示更糟）。 -->
+          <WsLoading
+            v-else-if="sketchLoading"
+            variant="map"
+            :text="t('worldsim.loader.sketch.text')"
+            :sub="t('worldsim.loader.sketch.sub')"
+          />
           <div v-else class="ws-dist__fail">
             <div class="ws-note ws-note--err">草图没画出来：{{ sketchError || '未知原因' }}</div>
             <button class="ws-btn" type="button" @click="loadSketch(true)">重试草图</button>
@@ -53,44 +60,62 @@
         <button type="button" title="复位（也支持双击 / 双指双击）" @click="gsReset(false)">⟲</button>
       </div>
 
-      <!-- 进度卡：AI 绘制中的实时状态 -->
+      <!-- 进度卡：AI 精绘的实时状态。
+           这是**全项目最长的等待**（实测 17 秒起、可能几十秒），所以它走 WsLoading 的
+           长任务档：阶段条（构思布局→落建筑→铺路绿化→收尾）+ 已等多久 +
+           预估剩余（**样本够才给，且写明是估算**）+ 始终可点的「停止」。
+
+           注意：**同一屏只有一个加载指示器** —— 原来这里自己画的那条进度条已经删掉，
+           统一由 WsLoading 画（两条一起动就是两个竞争的指示器）。
+           那条进度条的机制没变：仍然是写一个 `--ws-prog`（0~1）、由 CSS 用
+           `transform: scaleX()` 推进（**不动 width** —— width 是布局属性，流式绘制时
+           每帧改一次会让整条卡片反复重排），只是现在画它的人换成了
+           `worldsim-loading.css` 里的 `.ws-loading__bar`。
+           下面的计数 / 已达上限 / 重画是**信息与操作**，不是加载指示器。 -->
       <div v-if="aiRunning || aiDone || aiError" class="ws-prog ws-card">
-        <div class="ws-prog__row">
-          <span class="ws-dist__state">
-            <template v-if="aiRunning">AI 精绘中</template>
-            <template v-else-if="aiDone">AI 精绘完成 ✨</template>
-            <template v-else>AI 精绘未完成</template>
-          </span>
-          <span class="ws-tag">{{ fmtMs(elapsed) }}</span>
-        </div>
+        <WsLoading
+          variant="draw"
+          size="sm"
+          :text="progTitle"
+          :sub="stageText"
+          :stages="stageNames"
+          :stage="stageIndex"
+          :progress="progRatio"
+          :eta-ms="etaInfo.etaMs"
+          :rate="etaInfo.ratePerSec"
+          :cancellable="aiRunning"
+          :cancel-text="t('worldsim.loader.cancel')"
+          :hint="t('worldsim.loader.draw.longHint')"
+          @cancel="stopAi(true)"
+        />
         <div class="ws-prog__row ws-dist__counts">
           <span>🏢 {{ counts.buildings }}</span>
           <span>🛣 {{ counts.roads }}</span>
           <span>🌳 {{ counts.parks }}</span>
           <span>💧 {{ counts.water }}</span>
         </div>
-        <!-- P5-5：进度条**不再改 width**（那是布局属性，每帧一次重排），
-             改成写一个自定义属性、由 CSS 用 `transform: scaleX()` 推进 —— 只走合成。 -->
-        <div v-if="aiRunning" class="ws-prog__bar"><i :style="{ '--ws-prog': String(barPct / 100) }" /></div>
-        <div v-if="dropped" class="ws-dist__dropped">已达绘制上限，另有 {{ dropped }} 项未画出</div>
-        <div v-if="stageText" class="ws-dist__dropped">{{ stageText }}</div>
+        <div v-if="dropped" class="ws-dist__dropped">{{ t('worldsim.loader.draw.dropped', { n: dropped }) }}</div>
         <div class="ws-prog__row ws-dist__ops">
-          <button v-if="aiRunning" class="ws-btn ws-btn--ghost" type="button" @click="stopAi(true)">停止</button>
-          <button v-else class="ws-btn ws-btn--ghost" type="button" @click="startAi(true)">重画</button>
+          <button v-if="!aiRunning" class="ws-btn ws-btn--ghost" type="button" @click="startAi(true)">
+            {{ t('worldsim.loader.draw.retry') }}
+          </button>
         </div>
       </div>
 
-      <!-- 状态角标：明确区分「本地草图」和「AI 精绘」 -->
-      <div class="ws-dist__badge" :class="{ 'is-ai': aiDone }">
-        <span v-if="aiDone">AI 精绘</span>
-        <span v-else-if="aiRunning">AI 绘制中…</span>
-        <span v-else>本地草图</span>
+      <!-- 状态角标：明确区分「本地草图」和「AI 精绘」。
+           AI 正在画的时候**不显示**：那时进度卡已经把状态说全了，
+           同一屏上两个「正在绘制」只会互相抢注意力（收敛成一个主导的）。 -->
+      <div v-if="!aiRunning" class="ws-dist__badge" :class="{ 'is-ai': aiDone }">
+        <span v-if="aiDone">{{ t('worldsim.loader.draw.badgeAi') }}</span>
+        <span v-else>{{ t('worldsim.loader.draw.badgeSketch') }}</span>
       </div>
     </div>
 
     <div v-if="aiError" class="ws-note ws-note--warn ws-dist__err">
       <span>{{ aiError }}</span>
-      <button class="ws-btn ws-btn--ghost" type="button" @click="startAi(true)">重试 AI 精绘</button>
+      <button class="ws-btn ws-btn--ghost" type="button" @click="startAi(true)">
+        {{ t('worldsim.loader.draw.retryFull') }}
+      </button>
     </div>
 
     <div class="ws-dist__foot">
@@ -117,6 +142,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import WsLoading from './WsLoading.vue'
 import {
   districtRenderSvg,
@@ -124,7 +150,10 @@ import {
   type DistrictStreamEvent,
 } from '@/api/services/worldMap'
 import { DistrictPaint, paletteOf, type PaintCounts } from './wsDistrictPaint'
-import { fmtMs, hash32, svgToDataUrl } from './wsGeo'
+import { hash32, svgToDataUrl } from './wsGeo'
+// 加载态纯逻辑（分档 / 阶段推断 / 预估剩余）：抽出去是为了能被自检脚本直接跑，
+// 见 wsLoadPlan.ts 的文件头说明 —— 「预估剩余」是最容易变成骗人的地方。
+import { DRAW_STAGES, drawStageOf, etaOf, planBuildingsOf } from './wsLoadPlan'
 import { useWorldSimGestures } from '@/composables/useWorldSimGestures'
 
 const props = withDefaults(
@@ -138,6 +167,8 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{ (e: 'back'): void; (e: 'done'): void }>()
+
+const { t } = useI18n()
 
 /** 草图的网格规模：28×28（与 AI 的 expand=1 对齐，两边密度不至于差一倍） */
 const SKETCH_SIZE = 28
@@ -175,15 +206,59 @@ let stopStream: (() => void) | null = null
 let rafId = 0
 let timer: number | null = null
 let startedAt = 0
-/** 已收到的要素数（进度条用；总量未知，所以按「经验值 420 项」估个百分比，到顶就停在那） */
+/**
+ * 已收到的**要素**数（建筑 + 路 + 树 + 水；控制事件 start/meta/size 不算，见 onEvent）。
+ * 它有两个用途：**速率**（项/秒，实测值）和「每栋楼伴随多少条消息」的换算。
+ * ⚠️ 不要再拿它当进度分母：原来写死 420，而 28×28 档后端只让模型画 ~20 栋，
+ *    于是进度条永远只走到 5% 就停住 —— 那不是进度，那是装饰。
+ */
 const received = ref(0)
+/** 后端自报的网格边长（Event::Start / Event::Size）—— 计划建筑数由它推出来 */
+const gridSize = ref(SKETCH_SIZE)
+/** 最近一条要素的时间戳 + 「现在」（由既有的 500ms 计时器推进，不新增定时器） */
+const lastItemAt = ref(0)
+const nowTs = ref(0)
 
 const palette = computed(() => paletteOf(props.mapStyle))
-const barPct = computed(() => Math.min(96, Math.round((received.value / 420) * 100)))
+
+/* ── 长任务的进度 / 阶段 / 预估（规则全在 wsLoadPlan.ts，这里只喂数据）──────
+ * 阶段由**要素类型**推断：后端是流式推的，先建筑、后道路/绿化，最后 done，
+ * 所以不需要后端多告诉我们任何东西。 */
+const planBuildings = computed(() => planBuildingsOf(gridSize.value))
+const drawStage = computed(() =>
+  drawStageOf(counts.value, { done: aiDone.value, planBuildings: planBuildings.value }),
+)
+const stageIndex = computed(() => Math.max(0, DRAW_STAGES.indexOf(drawStage.value)))
+const stageNames = computed(() => DRAW_STAGES.map((s) => t(`worldsim.loader.draw.stage.${s}`)))
+const etaInfo = computed(() =>
+  etaOf({
+    done: counts.value.buildings,
+    target: planBuildings.value,
+    received: received.value,
+    elapsedMs: elapsed.value,
+    sinceLastItemMs: lastItemAt.value ? Math.max(0, nowTs.value - lastItemAt.value) : 0,
+  }),
+)
+/**
+ * 进度条的确定值：**只有建筑阶段、且样本足够**时才给。
+ * 进入铺路/收尾后剩下的要素数量后端没告诉我们 —— 这时退回不确定态，
+ * 不拿一个 100% 假装快完了。
+ */
+const progRatio = computed<number | null>(() => {
+  if (drawStage.value !== 'buildings') return null
+  const info = etaInfo.value
+  return info.confident ? info.ratio : null
+})
+const progTitle = computed(() => {
+  if (aiDone.value) return t('worldsim.loader.draw.done')
+  if (!aiRunning.value) return t('worldsim.loader.draw.undone')
+  return t(`worldsim.loader.draw.stageText.${drawStage.value}`)
+})
+
 function log(msg: string) {
-  const t = new Date()
+  const now = new Date()
   const p = (n: number) => String(n).padStart(2, '0')
-  logs.value = [...logs.value.slice(-60), `${p(t.getMinutes())}:${p(t.getSeconds())} ${msg}`]
+  logs.value = [...logs.value.slice(-60), `${p(now.getMinutes())}:${p(now.getSeconds())} ${msg}`]
 }
 
 /* ── 草图（秒出）────────────────────────────────────────────────────────── */
@@ -227,6 +302,7 @@ function scheduleRender() {
 function adoptSize(size?: number) {
   const n = Number(size)
   if (!Number.isFinite(n) || n < 8) return
+  gridSize.value = n // 计划建筑数（预估剩余的分母）由它推出来，所以先采纳
   if (paint.total === 0 && n !== paint.size) {
     paint = new DistrictPaint(n)
     log(`网格规模：${n}×${n}`)
@@ -234,15 +310,23 @@ function adoptSize(size?: number) {
 }
 
 function onEvent(ev: DistrictStreamEvent) {
-  received.value++
+  // ⚠️ received 只数**要素**（建筑/路/树/水）：它是速率和「每栋楼伴随几条消息」的分母。
+  // 把 start / meta / size 这些控制事件也算进去的话，一栋楼都还没画出来速率就不是 0 了
+  // （实测显示成「0.1 项/秒」），预估也会被这一串常量事件带偏。
+  if (ev.type === 'building' || ev.type === 'road' || ev.type === 'park' || ev.type === 'water') {
+    received.value++
+    // 每一条要素都刷新「最近活动时间」：预估剩余靠它判断有没有卡住
+    // （卡住时还倒计时就是撒谎，见 wsLoadPlan 的 ETA_RULES.stallMs）
+    lastItemAt.value = Date.now()
+  }
   switch (ev.type) {
     case 'start':
-      stageText.value = ev.area ? `正在生成：${ev.area}` : ''
+      // 区域名不用再占一行：卡片下面就有「小区」标题，这里留给「小区名」更有信息量
       log(`开始生成${ev.model ? `（${ev.model}）` : ''}`)
       adoptSize(ev.size) // start 也会带 size（Rust 侧 Event::Start），和 size 事件等价
       break
     case 'meta':
-      if (ev.name) stageText.value = `小区名：${ev.name}`
+      if (ev.name) stageText.value = t('worldsim.loader.draw.name', { name: ev.name })
       break
     case 'size':
       adoptSize(ev.size)
@@ -299,9 +383,13 @@ function startAi(fresh = false) {
   aiRunning.value = true
   startedAt = Date.now()
   elapsed.value = 0
+  nowTs.value = startedAt
+  lastItemAt.value = 0 // 新一轮：还没收到任何要素
   if (timer !== null) window.clearInterval(timer)
   timer = window.setInterval(() => {
     elapsed.value = Date.now() - startedAt
+    // nowTs 只用来算「距最近一条要素多久」（停滞判定），和 elapsed 同一个心跳
+    nowTs.value = Date.now()
   }, 500)
   log(`开始 AI 精绘（expand=${AI_EXPAND}）`)
 
@@ -428,9 +516,6 @@ defineExpose({ gsScale })
   gap: 0.6em;
   padding: 1em;
   text-align: center;
-}
-.ws-dist__state {
-  font-weight: 600;
 }
 .ws-dist__counts {
   gap: 0.5em;

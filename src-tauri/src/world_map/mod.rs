@@ -66,6 +66,17 @@ pub mod sketch;
 //                绝不能 await 网络，所以往外拆一层反而更好验证）
 pub mod state;
 pub mod stats;
+// T5-1：城市级**真拼接**大图 —— 把一个市下辖各区县的**街区图**按经纬度网格拼成一张大图。
+// 与 `geo_svg`/`bigmap`（行政区划总览）是两件事：那边画区县轮廓，这边每块都是街区图。
+//   · `stitch`     —— 纯逻辑：选块（重要性 + 分页）→ 定格距（候选里挑方位错最少的）
+//                     → 落格（撞格外扩 + 成对交换精修）→ 由画布上限反推块像素与网格数
+//                     → 逐块渲染 → 拼装（外框 + 编号/区县名 + 裁掉块内标题条）→ 走 maplib 缓存。
+//                     **不依赖 tauri**，可脱离工程 `rustc --test` 跑单测（手机上没编译预算）。
+//   · `stitch_cmd` —— Tauri 命令层（`world_map_bigmap_svg` / `world_map_bigmap_plan`）。
+//                     注册必须带全路径：`world_map::stitch_cmd::world_map_bigmap_svg`
+//                     （命令宏在定义处生成，写短了会 E0433 —— 本项目踩过）。
+pub mod stitch;
+pub mod stitch_cmd;
 pub mod stream;
 pub mod summary;
 pub mod transport;

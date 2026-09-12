@@ -26,7 +26,7 @@
         @keydown.enter.prevent="deepSearch"
       />
       <button class="ws-btn ws-btn--ghost" type="button" :disabled="deepBusy || !query" @click="deepSearch">
-        {{ deepBusy ? '搜索中…' : '深搜' }}
+        {{ deepBusy ? t('worldsim.loader.searching') : '深搜' }}
       </button>
     </div>
     <div v-if="searchHint" class="ws-note ws-pick__note">{{ searchHint }}</div>
@@ -36,11 +36,26 @@
       <div v-for="(col, ci) in columns" :key="ci" class="ws-pick__col ws-card">
         <div class="ws-pick__colhead">
           <span class="ws-pick__coltitle">{{ col.title }}</span>
-          <span class="ws-tag">{{ visible(col).length }}</span>
+          <!-- 数量只在真有数据时显示：加载中写个「0」是在撒谎（看起来像「这一级没有下级」） -->
+          <span v-if="!col.loading" class="ws-tag">{{ visible(col).length }}</span>
         </div>
-        <div class="ws-pick__list ws-scroll">
-          <WsLoading v-if="col.loading" variant="map" size="sm" text="加载列表…" />
-          <div v-else-if="col.error" class="ws-note ws-note--warn ws-pick__err">
+        <!-- `ws-stagger`：列表项错峰进场（每行 36ms，纯 CSS 的 --ws-i），
+             不要「啪」地整列弹出来 -->
+        <div class="ws-pick__list ws-scroll ws-stagger">
+          <!-- 结构已知（就是 N 行「名字 + adcode」的按钮）→ 用**骨架屏**，不用转圈：
+               形状照抄下面的 .ws-pick__item（行高/内边距/两栏分布），内容回来不跳版。
+               骨架默认 delay=0（它负责占位，晚出现就等于跳版）。
+
+               `ws-swap` = 骨架淡出 + 列表淡入的**交叉淡入**（不是硬切一下闪白）。
+               ⚠️ 这里刻意把「加载中」写成**独立的 v-if**，而不是原来那条 v-else-if 链的
+               第一支：Vue 的 <Transition> 只能包一个元素，包住链首会把链切断，
+               编译器直接报「v-else-if has no adjacent v-if」（vite build 会失败，已踩过）。
+               淡出期间骨架是 position:absolute（见 worldsim-loading.css 的
+               `.ws-swap-leave-active`），所以它不会把真内容顶下去 —— 交叉淡入不跳版。 -->
+          <Transition name="ws-swap">
+            <WsLoading v-if="col.loading" variant="list" size="sm" :rows="6" :text="t('worldsim.loader.pickColumn')" />
+          </Transition>
+          <div v-if="!col.loading && col.error" class="ws-note ws-note--warn ws-pick__err">
             <span>{{ col.error }}</span>
             <button class="ws-btn ws-btn--ghost" type="button" @click="reloadCol(ci)">重试</button>
           </div>
@@ -60,8 +75,9 @@
           </div>
         </div>
       </div>
+      <!-- 三列还没拿到（第一次拉列表）——同样是结构已知，走骨架 -->
       <div v-if="!columns.length" class="ws-pick__col ws-card">
-        <WsLoading variant="map" size="sm" text="正在取行政区划列表…" />
+        <WsLoading variant="list" size="sm" :rows="7" :text="t('worldsim.loader.pickList')" />
       </div>
     </div>
 
@@ -138,7 +154,8 @@ function titleFor(children: GeoRegion[]): string {
 
 async function loadCol(parent: string, index: number) {
   parents.value[index] = parent
-  const col: Col = { parent, title: '加载中', items: [], loading: true, error: '', selected: '' }
+  // 列标题在取到数据前先显示「加载中」（走 i18n）；取到后用真实级别（省/市/区县）
+  const col: Col = { parent, title: t('worldsim.loader.pickHead'), items: [], loading: true, error: '', selected: '' }
   columns.value = [...columns.value.slice(0, index), col]
   try {
     const items = await props.loadRegions(parent)
@@ -352,6 +369,8 @@ onMounted(async () => {
   gap: 0.15em;
   max-height: 32vh;
   min-height: 6em;
+  /* 骨架淡出时是 absolute（.ws-swap-leave-active），得有个定位祖先把它按在这块列表里 */
+  position: relative;
 }
 @media (max-width: 640px) {
   .ws-pick__list {
