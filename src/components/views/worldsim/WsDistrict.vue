@@ -10,22 +10,47 @@
       · AI 失败  → 保留草图 + 说明原因（多半是没配 LLM），随时可重试
   -->
   <div class="ws-dist">
-    <div class="ws-dist__stage ws-neigh">
-      <!-- ① 本地草图层（后端 sketch：确定性、毫秒级、不调 LLM） -->
-      <div class="ws-neigh__layer" :class="{ 'is-out': aiVisible }">
-        <img v-if="sketchUrl" :src="sketchUrl" :alt="`${area} 小区草图`" />
-        <WsLoading v-else-if="sketchLoading" variant="map" text="正在画小区草图…" sub="本地规则生成，通常不到 1 秒" />
-        <div v-else class="ws-dist__fail">
-          <div class="ws-note ws-note--err">草图没画出来：{{ sketchError || '未知原因' }}</div>
-          <button class="ws-btn" type="button" @click="loadSketch(true)">重试草图</button>
+    <div ref="neighHost" class="ws-dist__stage ws-neigh">
+      <!-- 手势的变换容器：草图层与 AI 层一起被平移/缩放。
+           放在这一层（而不是各自的 SVG/img 上）的好处是——AI 流式重绘会反复重建
+           内层节点，变换挂在外层就不会被重建冲掉。 -->
+      <div
+        ref="neighPan"
+        class="ws-neigh__pan"
+        :class="{ 'is-drag': gsDragging || gsInstant }"
+        :style="gsStyle"
+      >
+        <!-- ① 本地草图层（后端 sketch：确定性、毫秒级、不调 LLM） -->
+        <div class="ws-neigh__layer" :class="{ 'is-out': aiVisible }">
+          <img v-if="sketchUrl" :src="sketchUrl" :alt="`${area} 小区草图`" />
+          <WsLoading v-else-if="sketchLoading" variant="map" text="正在画小区草图…" sub="本地规则生成，通常不到 1 秒" />
+          <div v-else class="ws-dist__fail">
+            <div class="ws-note ws-note--err">草图没画出来：{{ sketchError || '未知原因' }}</div>
+            <button class="ws-btn" type="button" @click="loadSketch(true)">重试草图</button>
+          </div>
         </div>
+
+        <!-- ② AI 精绘层（流式增量；第一条要素到了就淡入接管）
+             注意是 v-html 注入的裸 <svg>：我这份画笔**不写 <style>**，
+             所有颜色/线宽都是元素属性，所以注入真 DOM 也不会污染任何全局样式。 -->
+        <div class="ws-neigh__layer ws-neigh__ai" :class="{ 'is-in': aiVisible }">
+          <div v-if="aiSvgInner" class="ws-paint-host" v-html="aiSvgInner" />
+        </div>
+
+        <!-- ③ 人物层（P2-1）：由页面从外面插进来。
+             为什么用插槽而不是在这里 import 组件：
+               这一层的数据（角色/日程/头像）与面板状态都属于页面级别，
+               而且它必须落在**同一个手势变换容器**里才会跟着地图一起缩放。
+             `pin` 这个名字的意思是「钉在地图上的东西」——
+               下一阶段（P4 的走动小人、事件气泡）也走同一个口子。 -->
+        <slot name="pin" />
       </div>
 
-      <!-- ② AI 精绘层（流式增量；第一条要素到了就淡入接管）
-           注意是 v-html 注入的裸 <svg>：我这份画笔**不写 <style>**，
-           所有颜色/线宽都是元素属性，所以注入真 DOM 也不会污染任何全局样式。 -->
-      <div class="ws-neigh__layer ws-neigh__ai" :class="{ 'is-in': aiVisible }">
-        <div v-if="aiSvgInner" class="ws-paint-host" v-html="aiSvgInner" />
+      <!-- 缩放/复位（与行政区划舞台同一个 composable，手感一致） -->
+      <div class="ws-zoomctl">
+        <button type="button" title="放大" :disabled="gsScale >= 3.99" @click="zoomBy(1.35)">＋</button>
+        <button type="button" title="缩小" :disabled="gsScale <= 0.61" @click="zoomBy(1 / 1.35)">－</button>
+        <button type="button" title="复位（也支持双击 / 双指双击）" @click="gsReset(false)">⟲</button>
       </div>
 
       <!-- 进度卡：AI 绘制中的实时状态 -->
@@ -98,6 +123,7 @@ import {
 } from '@/api/services/worldMap'
 import { DistrictPaint, paletteOf, type PaintCounts } from './wsDistrictPaint'
 import { fmtMs, hash32, svgToDataUrl } from './wsGeo'
+import { useWorldSimGestures } from '@/composables/useWorldSimGestures'
 
 const props = withDefaults(
   defineProps<{
@@ -114,6 +140,18 @@ const emit = defineEmits<{ (e: 'back'): void; (e: 'done'): void }>()
 /** 草图的网格规模：28×28（与 AI 的 expand=1 对齐，两边密度不至于差一倍） */
 const SKETCH_SIZE = 28
 const AI_EXPAND = 1
+
+// 小区图也要能拖能缩（它就是玩家待得最久的那张图）——与行政区划舞台共用同一套手势
+const neighHost = ref<HTMLElement | null>(null)
+const neighPan = ref<HTMLElement | null>(null)
+const {
+  scale: gsScale,
+  dragging: gsDragging,
+  instant: gsInstant,
+  panStyle: gsStyle,
+  reset: gsReset,
+  zoomBy,
+} = useWorldSimGestures({ target: neighHost, content: neighPan })
 
 const sketchUrl = ref('')
 const sketchLoading = ref(true)
@@ -313,6 +351,7 @@ function stopAi(manual = false) {
 /* ── 生命周期 ─────────────────────────────────────────────────────────── */
 function reset() {
   stopAi(false)
+  gsReset(false) // 换区县：缩放平移一起归零，免得新图停在上一张的放大倍率上
   aiDone.value = false
   aiError.value = ''
   aiRunning.value = false
@@ -351,6 +390,17 @@ onBeforeUnmount(() => {
   stopAi(false)
   if (rafId) cancelAnimationFrame(rafId)
 })
+
+/**
+ * 把手势的缩放倍率暴露给页面。
+ *
+ * 用途只有一个：地图上的头像要「位置跟着缩放、尺寸不变」，
+ * 就得知道自己被放大了几倍（见 WsAvatarMark 的 zoom 说明）。
+ * 这个倍率是**这个组件内部**的手势状态（neighHost/neighPan 都在这里），
+ * 页面拿不到，所以只能用 defineExpose 露出来 —— 不去动 shared composable，
+ * 也不给页面再塞一个手势实例（两个实例会互相打架）。
+ */
+defineExpose({ gsScale })
 </script>
 
 <style scoped>

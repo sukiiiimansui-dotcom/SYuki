@@ -267,10 +267,43 @@ async fn run_stream(
         return;
     }
     let layout = stream::assemble_layout(&buf, &area, base);
+
+    // ── 世界模拟：布局落地 = 这个小区「成为现实」的那一刻 ──
+    // 顺手把设施铺出来写进 MapRuntime（为什么不交给前端：见
+    // `state::install_facilities` 的文档注释 —— 前端只有 SVG，算不出设施表）。
+    // 种子用区域名的哈希而**不是**随机数：同一个小区的店名与位置必须可复现，
+    // 否则每次重进都换一批店，AI 上一轮说的「楼下便利店」就找不到了。
+    let facs = super::facilities::generate_all(&layout, &area, None, "district", Some(area_seed(&area)));
+    let cell_m = facs
+        .get("facilities")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first())
+        .and_then(|f| f.get("cell_meters"))
+        .and_then(Value::as_f64)
+        .filter(|c| *c > 0.0)
+        .unwrap_or(super::facilities::DEFAULT_CELL_METERS);
+    if let Some(list) = facs.get("facilities") {
+        super::state::install_facilities(&area, list, cell_m);
+    }
+
     let _ = pump.send(Event::Done {
         layout,
         elapsed: t0.elapsed().as_secs_f64(),
     });
+}
+
+/// 区域名 → 稳定的 i64 种子（FNV-1a 64 位，取正）。
+///
+/// 用它而不是 `rand::random()`：设施表一旦随机，同一个小区每次生成都换一批店名与
+/// 摆放，AI 记忆里的「楼下便利店」下一轮就解析不到了（`move::resolve_destination`
+/// 是按名字查设施表的）。可复现比"每次都不一样"重要得多。
+fn area_seed(area: &str) -> i64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in area.trim().as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (h >> 1) as i64
 }
 
 // ───────────────────────── Tauri 命令 ─────────────────────────

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="地铁">
+<!-- 世界模拟 · 交通工具立绘 · 地铁 · 手绘扁平 SVG（无第三方素材授权问题） -->
+<path d="M16 12 h32 a8 8 0 0 1 8 8 v22 a8 8 0 0 1 -8 8 h-32 a8 8 0 0 1 -8-8 v-22 a8 8 0 0 1 8-8z" fill="#a8c8e8"/>
+      <rect x="14" y="18" width="36" height="12" rx="4" fill="#eef4fb"/>
+      <rect x="14" y="34" width="36" height="6" rx="3" fill="#7fb6e0"/>
+      <rect x="26" y="44" width="12" height="6" rx="2" fill="#5a7ba8"/>
+      <circle cx="18" cy="46" r="4" fill="#3c4b5f"/><circle cx="46" cy="46" r="4" fill="#3c4b5f"/>
+</svg>

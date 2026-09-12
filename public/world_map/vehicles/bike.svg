@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="自行车">
+<!-- 世界模拟 · 交通工具立绘 · 自行车 · 手绘扁平 SVG（无第三方素材授权问题） -->
+<circle cx="16" cy="46" r="11" fill="none" stroke="#5a7ba8" stroke-width="4"/>
+      <circle cx="48" cy="46" r="11" fill="none" stroke="#5a7ba8" stroke-width="4"/>
+      <path d="M16 46 L30 24 L44 46" fill="none" stroke="#8fd6c0" stroke-width="4" stroke-linecap="round"/>
+      <path d="M30 24 L40 24" stroke="#8fd6c0" stroke-width="4" stroke-linecap="round"/>
+      <path d="M44 46 L36 30" stroke="#8fd6c0" stroke-width="3.4" stroke-linecap="round"/>
+      <circle cx="30" cy="20" r="4" fill="#ffb4a2"/>
+</svg>

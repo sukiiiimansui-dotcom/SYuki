@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="出租车">
+<!-- 世界模拟 · 交通工具立绘 · 出租车 · 手绘扁平 SVG（无第三方素材授权问题） -->
+<path d="M10 34 h44 a6 6 0 0 1 6 6 v6 a4 4 0 0 1 -4 4 h-48 a4 4 0 0 1 -4-4 v-6 a6 6 0 0 1 6-6z" fill="#ffd166"/>
+      <path d="M16 34 l6-12 h20 l6 12z" fill="#ffe3a3"/>
+      <rect x="22" y="25" width="9" height="8" rx="2" fill="#eef4fb"/>
+      <rect x="34" y="25" width="9" height="8" rx="2" fill="#eef4fb"/>
+      <circle cx="18" cy="50" r="6" fill="#3c4b5f"/><circle cx="46" cy="50" r="6" fill="#3c4b5f"/>
+      <rect x="26" y="8" width="14" height="5" rx="2.5" fill="#ffb4a2"/>
+</svg>

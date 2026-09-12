@@ -13,6 +13,22 @@
 pub mod bridge;
 pub mod coord;
 pub mod details;
+// P4-1：AI 位置指令（⟦wm:{…}⟧）的剥离器。纯函数 + 流式状态机，不依赖 tauri，
+// 由 `ai_service/message_system/producer.rs` 在**切句之前**调用（选型理由见文件头）。
+pub mod directive;
+// P5-2 / P5-3：事件引擎的**接线层**（3 条 Tauri 命令 + `world_map:event` 广播 +
+// 待写记忆队列）。上游是纯函数模块 `events.rs`，下游是前端与记忆管线。
+// 组上下文 / 闸门 / drain 这些判定逻辑都抽成了不依赖 `AppHandle` 的纯函数
+// （能脱离工程 `rustc --test` 真跑单测，理由见 event_cmd.rs 文件头）。
+// 注册必须带全路径：`world_map::event_cmd::world_map_tick`（命令宏在定义处生成，
+// 写短了会 E0433 —— 本项目踩过）。
+pub mod event_cmd;
+// P5-1：现实事件引擎（10 类 · 41 条事件 · 加权随机 + 冷却 + 全局节流 + 四通道文案）。
+// 与 directive/summary 同属**纯函数模块**：不 import tauri、不读系统时间、不取随机数
+// （now_secs / roll / rng 全从参数进来），所以能脱离工程 `rustc --test` 跑单测。
+// **本文件自己不暴露 Tauri 命令**：命令在 `event_cmd.rs`，那边负责组 `EventContext`、
+// 落 MapRuntime 并广播给前端。
+pub mod events;
 pub mod facilities;
 pub mod geo;
 // 实时数据通路：定位（world_map_location）+ 天气（world_map_weather）。
@@ -26,13 +42,32 @@ pub mod live;
 // 桌面端行为与改动前完全一致。
 pub mod loc_android;
 pub mod maplib;
+// P4-2 / P4-3：移动状态机。
+//   · `r#move`（文件是 move.rs，`move` 是 Rust 关键字，模块名只能写原生标识符）
+//     —— 纯逻辑：出行方式速度表、按时间戳插值、进程级行程注册表。**不依赖 tauri**，
+//        所以能脱离工程单独 `rustc --test` 跑单测（手机上没有编译预算）。
+//   · `move_cmd` —— Tauri 命令层 + 派发胶水（读 MapRuntime 快照 → 起行程 → 落事件）。
+//     四条命令注册时必须带 `world_map::move_cmd::` 前缀（命令宏在定义处生成，
+//     理由同下面的 bridge/live/state，写短了会 E0433）：
+//     `world_map_trip_status` / `world_map_trip_start` /
+//     `world_map_trip_cancel` / `world_map_trip_speedup`
+pub mod r#move;
+pub mod move_cmd;
 pub mod osm;
 pub mod render;
 pub mod render_geo;
 pub mod schedule;
 pub mod sketch;
+// P3 的两个新模块（世界模拟：运行时状态 → AI 工具 → 对话注入）：
+//   · state   —— 进程内共享的地图运行时状态（内含 `world_map_update_runtime` /
+//                `world_map_runtime` 两条命令，注册同样要带 `world_map::state::` 前缀）
+//   · summary —— 注入摘要 + 字段级合并的**纯函数**层：不依赖 tauri/tokio/reqwest，
+//                可以脱离工程单独 `rustc --test` 跑单测（注入点在 game_status 锁内，
+//                绝不能 await 网络，所以往外拆一层反而更好验证）
+pub mod state;
 pub mod stats;
 pub mod stream;
+pub mod summary;
 pub mod transport;
 
 // 注意：`bridge` 里的两个命令要按**完整路径**注册进 lib.rs 的 invoke_handler：

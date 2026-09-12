@@ -80,19 +80,30 @@
         </div>
       </section>
 
-      <!-- ④ 地图（国/省/市/区县）—— v-html 注入后端 SVG，点击靠事件委托 -->
+      <!-- ④ 地图（国/省/市/区县）—— v-html 注入后端 SVG，点击靠事件委托
+           手势（平移/捏合/滚轮/复位）只作用在 .ws-geo__pan 这一层变换容器上，
+           SVG 本体不动 —— 详见 useWorldSimGestures 的说明。 -->
       <section v-else class="ws-mapwrap">
-        <div
-          ref="geoHost"
-          class="ws-geo"
-          @click="onGeoClick"
-          @dblclick="onGeoDbl"
-        >
-          <div v-if="stageMarkup" class="ws-geo__inner" v-html="stageMarkup" />
-          <div v-else-if="!busy" class="ws-center ws-geo__empty">
-            <div class="ws-note ws-note--err">这一级的地图没画出来</div>
-            <button class="ws-btn" type="button" @click="retryStage">重试</button>
+        <div ref="geoHost" class="ws-geo" @click="onGeoClick">
+          <div
+            ref="geoPan"
+            class="ws-geo__pan"
+            :class="{ 'is-drag': gsDragging || gsInstant }"
+            :style="gsStyle"
+          >
+            <div v-if="stageMarkup" class="ws-geo__inner" v-html="stageMarkup" />
+            <div v-else-if="!busy" class="ws-center ws-geo__empty">
+              <div class="ws-note ws-note--err">这一级的地图没画出来</div>
+              <button class="ws-btn" type="button" @click="retryStage">重试</button>
+            </div>
           </div>
+        </div>
+
+        <!-- 缩放/复位：鼠标派与「不想捏合」的人的明路（也顺带让人看见缩放是有上限的） -->
+        <div class="ws-zoomctl">
+          <button type="button" title="放大" :disabled="gsScale >= 3.99" @click="zoomBy(1.35)">＋</button>
+          <button type="button" title="缩小" :disabled="gsScale <= 0.61" @click="zoomBy(1 / 1.35)">－</button>
+          <button type="button" title="复位（也支持双击地图 / 双指双击）" @click="gsReset(false)">⟲</button>
         </div>
 
         <!-- 区域切换 / 首次加载的加载动画（盖在舞台上，不销毁已有的图） -->
@@ -125,13 +136,93 @@
       <!-- ⑦ 小区地图（终点） -->
       <section v-else-if="step === 'neighborhood'" class="ws-neighwrap">
         <WsDistrict
+          ref="districtRef"
           :area="areaLabel || '未知区域'"
           :map-style="style"
           @back="backTo(path.length - 1)"
           @done="onWorldEntered"
+        >
+          <!-- P2-1：人物层钉在地图上（跟着手势一起缩放平移，见 WsDistrict 的 pin 插槽说明）
+               `zoom` = 小区图自己的手势倍率（由 WsDistrict defineExpose 出来）：
+               头像位置跟着地图缩放走，但尺寸始终是屏幕上那么大（不然放大 4× 会变成大饼）。
+               P4-3：交通工具标记也铺在这一层（同一个手势变换容器里才会跟着地图动）。 -->
+          <template #pin>
+            <WsAvatarLayer
+              :placed="placedActors"
+              :grid="WS_GRID"
+              :selected-id="wsPanel.targetId.value"
+              :me-name="meName"
+              :zoom="districtScale"
+              @pick="onActorPick"
+            />
+            <WsVehicleMark
+              v-for="t in movingTrips"
+              :key="t.id"
+              :trip="t"
+              :grid="WS_GRID"
+              :zoom="districtScale"
+            />
+          </template>
+        </WsDistrict>
+
+        <!-- P4-2：行程卡（浮在左下角）。只在真有行程时出现，绝不占着地方。 -->
+        <WsTripCard
+          v-if="shownTrip"
+          floating
+          :trip="shownTrip"
+          :speedup="trips.speedup.value"
+          :busy="tripBusy"
+          @speedup="onTripSpeedup"
+          @cancel="onTripCancel"
         />
       </section>
+
+      <!-- ⑦.5 地图上的小人浮标（P2-1 的入口）：一眼看到「地图上有人」，
+           点它也能直接把「自己」的面板打开（不依赖刚好点中那个小圆头像） -->
+      <div v-if="step === 'neighborhood'" class="ws-people">
+        <button class="ws-chip" type="button" @click="loadActors(true)">👥 {{ placedActors.length }}</button>
+        <button class="ws-chip" type="button" :title="t('worldsim.me.title')" @click="openMe">🙂 {{ meName }}</button>
+      </div>
+
+      <!-- ⑧ P2-3 / P2-4：角色面板（含立绘侧边栏）/ 自己的面板。
+           挂在 .ws-stage 里而不是 <main> 里：定位是相对 stage 的，
+           这样面板底部不会盖住底部动作条（「回到区县 / 进入这个世界」还要能点）。 -->
+      <WsCharPanel
+        v-if="wsPanel.open.value && !wsPanel.isMe.value && currentActor"
+        :actor="currentActor"
+        :data="actors"
+        :area-text="areaLabel"
+        :narrow="wsPanel.narrow.value"
+        :open="wsPanel.open.value"
+        :portrait-open="wsPanel.portraitOpen.value"
+        :current-role-id="currentRoleId"
+        @close="wsPanel.closePanel"
+        @portrait="wsPanel.togglePortrait"
+        @goto-chat="onGotoChat"
+        @quick="onQuick"
+      />
+      <WsMePanel
+        v-else-if="wsPanel.open.value && wsPanel.isMe.value"
+        :data="actors"
+        :placed="placedActors"
+        :grid="WS_GRID"
+        :area-text="areaLabel"
+        :narrow="wsPanel.narrow.value"
+        :open="wsPanel.open.value"
+        :selected-id="wsPanel.targetId.value"
+        :me-name="meName"
+        @close="wsPanel.closePanel"
+        @pick="onActorPick"
+        @refresh="actors.loadTimeWeather()"
+      />
     </main>
+
+    <!-- toast 容器（快捷动作「即将上线」这类提示必须有可见反应，绝不静默） -->
+    <div class="ws-toasts" aria-live="polite">
+      <div v-for="m in toastItems" :key="m.id" class="ws-toast" :class="`ws-toast--${m.kind}`">
+        {{ m.text }}
+      </div>
+    </div>
 
     <!-- ── 底部动作条（按状态给唯一的主按钮）──────────────────────────── -->
     <footer v-if="showFoot" class="ws-foot">
@@ -171,7 +262,14 @@
 <script setup lang="ts">
 // 皮肤（主题变量 + 动画关键帧）在这里引入：全局只此一处，后续 P2~P5 的页面直接复用同一个文件
 import '@/assets/styles/worldsim.css'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+/* ═══ 【L-SYuki 线专用 · 提 PR 时整段剔除（这 2 行）】 ═══════════════════════
+ * B 部分：浏览器手势抑制（touch-action / overscroll-behavior / 长按选择）。
+ * 机主的硬要求：抑制浏览器手势**不能进 PR**，所以它单独一个文件、单独一次 import，
+ * 剔的时候把这两行删掉 + 删掉那个文件即可（详见文件头与 docs/world-map/09 的
+ * 「九、PR 排除清单」，那里有精确行号）。
+ * 注意：A 部分（地图手势本体，useWorldSimGestures.ts）**是功能，要留在 PR 里**。 */
+import '@/assets/styles/worldsim-gesture-lock.css'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import WsLoading from './WsLoading.vue'
@@ -179,9 +277,27 @@ import WsCrumb from './WsCrumb.vue'
 import WsConfirm from './WsConfirm.vue'
 import WsPicker from './WsPicker.vue'
 import WsDistrict from './WsDistrict.vue'
+// P2：人物层 + 两个面板（面板与头像层都是这一页独有的，懒加载没有意义，直接静态 import）
+import WsAvatarLayer from './WsAvatarLayer.vue'
+import WsCharPanel from './WsCharPanel.vue'
+import WsMePanel from './WsMePanel.vue'
+// P4-2 / P4-3：行程卡 + 地图上的交通工具（样式由组件自己 import worldsim-trip.css）
+import WsTripCard from './WsTripCard.vue'
+import WsVehicleMark from './WsVehicleMark.vue'
+import { wsToast, useWsToast } from './wsToast'
+import type { PlacedActor } from './wsActors'
 import { geoLevelOf, levelLabel } from './wsGeo'
+// P3-3 的接线点：把「现在在哪、谁站在哪」推给 Rust 的 MapRuntime。
+// **不推的后果很隐蔽**：`world_sim_enabled()` 恒 false → 位置指令剥离器不启用、
+// 注入摘要恒为空串（角色不知道自己在哪）。见该文件头部的说明。
+import { clearRuntime, pushRuntime } from './wsRuntimePush'
 import { useElementSize, useWorldSimGeo, useWorldSimTheme } from '@/composables/useWorldSimGeo'
 import { useWorldSim } from '@/composables/useWorldSim'
+import { useWorldSimGestures } from '@/composables/useWorldSimGestures'
+import { useWsActors } from '@/composables/useWsActors'
+import { useWsPanel } from '@/composables/useWsPanel'
+import { useWorldTrips } from '@/composables/useWorldTrips'
+import { useGameStore } from '@/stores/modules/game'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -190,8 +306,20 @@ const { t } = useI18n()
 const theme = useWorldSimTheme()
 const geo = useWorldSimGeo()
 const geoHost = ref<HTMLElement | null>(null)
+const geoPan = ref<HTMLElement | null>(null)
 // 舞台尺寸就量 .ws-geo 本身：后端 SVG 的宽高必须与它 1:1，字号才不会在手机上缩没
 const { sizeForBackend } = useElementSize(geoHost, { w: 900, h: 620 })
+
+// 地图手势（单指拖 / 双指捏 / 滚轮 / 双击复位）：只改变换容器的 transform，不碰 SVG 本体
+const {
+  scale: gsScale,
+  dragging: gsDragging,
+  instant: gsInstant,
+  panStyle: gsStyle,
+  reset: gsReset,
+  zoomBy,
+  shouldSuppressClick,
+} = useWorldSimGestures({ target: geoHost, content: geoPan })
 const sim = useWorldSim({ geo, getViewport: () => sizeForBackend.value })
 
 // 解构出来给模板用：Vue 模板对**顶层** ref 会自动解包，比满篇 `sim.xxx.value` 稳得多
@@ -233,6 +361,178 @@ const {
   changeMapStyle,
 } = sim
 const { rootClass, theme: themeName, dark, darkPref, cycleTheme, cycleDark } = theme
+
+/* ══ P2：地图上的「人」+ 面板 ══════════════════════════════════════════════
+ * 数据（谁在哪、头像、日程）在 useWsActors；面板的开关/选中在 useWsPanel。
+ * 这一层只做两件事：把人物层插进地图、把面板接上事件。
+ * ⚠️ 立绘（≈73MB/张）的生命周期只归 WsCharPanel + useWsPortrait 管，
+ *    这里**不碰**，也就不可能被这一页误加载。 */
+const gameStore = useGameStore()
+/** 小区图的网格边长：与 WsDistrict 的 SKETCH_SIZE / 后端 sketch 一致 */
+const WS_GRID = 28
+const wsPanel = useWsPanel()
+const actors = useWsActors({ grid: ref(WS_GRID), areaLabel: sim.areaLabel })
+const { placed: placedActors } = actors
+/** 面板当前对着的那个人（面板关着 / 对着自己时是 null） */
+const currentActor = computed<PlacedActor | null>(() => {
+  const id = wsPanel.targetId.value
+  if (!id || id === 'me') return null
+  return placedActors.value.find((a) => a.id === id) || null
+})
+
+/** 玩家显示名（gameStore 里没有就退回 i18n 的「我」） */
+const meName = computed(() => gameStore.userName || t('worldsim.actor.me'))
+/** 当前正在对话的角色（决定「去找他聊聊」是直连还是提醒会切人） */
+const currentRoleId = computed(() => Number(gameStore.currentInteractRoleId ?? gameStore.mainRoleId) || 0)
+
+const { items: toastItems, clear: clearToasts } = useWsToast()
+
+/** 小区图的手势倍率（WsDistrict 用 defineExpose 露出来）—— 头像层据此抵消缩放 */
+const districtRef = ref<{ gsScale?: number } | null>(null)
+const districtScale = computed(() => Number(districtRef.value?.gsScale) || 1)
+
+/* ══ P4：行程（谁在路上）════════════════════════════════════════════════════
+ * 数据（轮询 + 按时间戳插值 + `world_map:trip` 事件 + 位置回推）全在 useWorldTrips；
+ * 这里只做三件事：把车铺进地图、把行程卡摆出来、把到达事件接上 toast。
+ * ⚠️ 位置回推的「让位」纪律：行程中的角色由 trips 推插值位置，P2 的静态推送必须让开，
+ *    否则两边互相覆盖，表现是「角色走两步被拉回去」。见 syncRuntime 里的 filter。 */
+const trips = useWorldTrips({
+  // ⚠️ 参数名不能叫 `t`（会把上面 useI18n 的 `t` 遮蔽掉，vue-tsc 会报 TS2349）
+  onArrive: (trip: { role?: string; to?: { name?: string } }) => {
+    wsToast(t('worldsim.trip.arrivedToast', { name: trip.role || '', place: trip.to?.name || '' }), 'ok')
+    // 到达后把 runtime 里的新位置读回来（否则 P2 重推的还是出发前的老位置，
+    // 会出现「车开到了、头像还站在原地」）
+    void loadActors(true)
+  },
+})
+/** 地图上要画的那几条行程 */
+const movingTrips = trips.movingTrips
+/** 行程卡显示哪一条：优先当前角色的 active，没有就第一条在途的 */
+const shownTrip = computed(() => trips.active.value || movingTrips.value[0] || null)
+/** 拨开关/取消进行中（防连点） */
+const tripBusy = ref(false)
+
+async function onTripSpeedup(fast: boolean) {
+  tripBusy.value = true
+  try {
+    const r = await trips.setSpeedup(fast) // 内部用后端权威值覆盖 + 重读，不做乐观更新
+    wsToast(
+      fast
+        ? t('worldsim.trip.fastOn', { n: r.speedup })
+        : t('worldsim.trip.fastOff'),
+      r.ok ? 'ok' : 'warn',
+    )
+  } finally {
+    tripBusy.value = false
+  }
+}
+
+async function onTripCancel() {
+  tripBusy.value = true
+  try {
+    const r = await trips.cancel()
+    // 没有行程时后端返回 ok:false（不是异常），如实提示，绝不静默
+    wsToast(
+      r.ok
+        ? t('worldsim.trip.cancelled')
+        : t('worldsim.trip.nothingToCancel', { reason: r.message || '' }),
+      r.ok ? 'ok' : 'warn',
+    )
+  } finally {
+    tripBusy.value = false
+  }
+}
+
+/* ── P3-3：把地图状态推给 Rust（AI 才知道「我在哪、附近有什么」）───────────
+ * 推三样东西：`scene`（有没有它 = 世界模拟开没开）、`actors`（谁站在哪）、
+ * `current_role`（现在是谁在说话 —— `get_my_location` / `move_to` 靠它认人）。
+ * 纪律：**别每帧推**。只在「名单变了 / 进了小区图」时推一次，其余交给后端缓存。 */
+
+/** 正在对话的角色名（= `settings.yml` 的 `ai_name`，也是 runtime 里 actors 的键） */
+const currentRoleName = computed(() => {
+  const id = currentRoleId.value
+  const r = id ? (gameStore.gameRoles as Record<number, { roleName?: string } | undefined>)[id] : undefined
+  return String(r?.roleName || '').trim()
+})
+
+/** 组一次 patch 并推上去（幂等；失败只记日志，绝不打断界面） */
+async function syncRuntime(reason: string): Promise<void> {
+  if (!placedActors.value.length && !areaLabel.value) return
+  const r = await pushRuntime({
+    area: areaLabel.value,
+    // scene.place 只在地点确实比 area 更具体时才填（area 已经是「…·东山口」了，
+    // 再补一个同名 place 只会在注入里变成「…·东山口·东山口里」）
+    adcode: leaf.value?.adcode,
+    actors: placedActors.value.filter((a) => !trips.isOwned(a.name)),
+    meSource: locSource.value || undefined,
+    currentRole: currentRoleName.value || undefined,
+  })
+  if (!r.ok) console.warn('[worldsim] 地图状态回推失败（AI 上下文会少一段）：', reason, r.error)
+}
+
+/** 名单/坐标变了就补齐（同一 tick 内多次变化只推一次） */
+let syncTimer: number | null = null
+function scheduleSyncRuntime(reason: string) {
+  if (syncTimer !== null) window.clearTimeout(syncTimer)
+  syncTimer = window.setTimeout(() => {
+    syncTimer = null
+    void syncRuntime(reason)
+  }, 120)
+}
+
+/** 首次真正进到小区图时装配「地图上的人」（+ 时间天气） */
+let actorsLoaded = false
+async function loadActors(force = false) {
+  if (actorsLoaded && !force) return
+  actorsLoaded = true
+  await actors.load()
+  void actors.loadTimeWeather()
+  // 名单刚装配好 → 立刻推一次（顺序很重要：先 load 再推，否则推上去的是空名单）
+  await syncRuntime('loadActors')
+}
+
+/** 点头像/小地图里的某个人 → 打开对应面板 */
+function onActorPick(a: PlacedActor) {
+  wsPanel.openPanel(a.isMe ? 'me' : a.id)
+}
+
+function openMe() {
+  wsPanel.openPanel('me')
+}
+
+/**
+ * 「去找他聊聊」。
+ *
+ * ⚠️ 这里**故意不调用** `select_character` 命令：Rust 侧它会走 `init_game_status()`，
+ * 把当前对话（line_list / 在场角色）整份重置 —— 从地图上点一下就清空聊天记录，
+ * 是绝不能做的破坏性操作。所以：
+ *   · 已经在跟这个角色聊 → 直接跳 /chat（零副作用）
+ *   · 不是 → 先说清楚「切角色会开一段新对话」，用户确认了再跳
+ */
+function onGotoChat(a: PlacedActor) {
+  if (!a?.roleId) {
+    wsToast(t('worldsim.chat.noRole'), 'warn')
+    return
+  }
+  if (a.roleId === currentRoleId.value) {
+    void router.push('/chat')
+    return
+  }
+  const ok = window.confirm(t('worldsim.chat.switchWarn', { name: a.name }))
+  if (ok) void router.push('/chat')
+}
+
+/**
+ * 快捷动作（打招呼/送礼物/约他出门）。
+ *
+ * 现在**没有任何后端能力**，所以这里只负责把事件转发出去（下一步接后端时
+ * 直接在这个函数里换成真正调用即可），**可见的提示由 WsCharPanel 弹**
+ * —— 提示只留一处，避免同一次点击弹两条 toast。
+ */
+function onQuick(_action: string, _a: PlacedActor) {
+  /* 预留：P4/P5 接「打招呼 / 送礼物 / 约他出门」的真实能力时在此处调用 */
+}
+
 
 /* ── 展示用的派生量 ─────────────────────────────────────────────────── */
 const stageLabel = computed(() => {
@@ -343,17 +643,22 @@ function pickFromEvent(e: Event): { adcode: string; name: string } | null {
 }
 
 function onGeoClick(e: MouseEvent) {
+  // 刚拖过地图（含双指缩放）：手指离开后浏览器会**补发**一发 click，
+  // 不拦就会变成「拖完还顺带选中/下钻一个区划」——最难查的那类 bug。
+  if (shouldSuppressClick()) return
   const hit = pickFromEvent(e)
   if (!hit) return
   sim.setPick(hit.adcode, hit.name)
 }
 
-/** 双击 = 直接进（比「点一下再点按钮」快一档，误触代价也只是多下钻一级） */
-function onGeoDbl(e: MouseEvent) {
-  const hit = pickFromEvent(e)
-  if (!hit) return
-  void sim.drillTo({ adcode: hit.adcode, name: hit.name })
-}
+// 说明：双击原来是「直接下钻」，现在按机主的要求改成**手势复位**（useWorldSimGestures 里
+// 统一处理，鼠标双击 + 触屏双击/双指双击都算）。下钻仍然有两条路：
+// 单击区划选中 → 底部「进入 XXX」按钮；或点面包屑。
+// 换级/换区县时把缩放平移复位（不然从省级放大着钻到区县，画面还停在那个放大倍率上）
+watch(
+  () => sim.stage.value?.adcode,
+  () => gsReset(false),
+)
 
 /* ── 杂项动作 ───────────────────────────────────────────────────────── */
 function goMenu() {
@@ -371,7 +676,42 @@ function onPickerCancel() {
 function onWorldEntered() {
   // P1 到这里就是终点了：世界已就位（P2 起才有真正可逛的画面）
   sim.note.value = '世界已就位（P1 到此为止，人物/事件在后续阶段接）'
+  // P2：真正进到小区图 → 把「地图上的人」装配出来（只装配一次，点浮标可刷新）
+  void loadActors()
 }
+
+// 走到小区这一步就装配人物（面包屑回退再回来时不再重复装配 —— 数据没变）
+watch(
+  () => sim.step.value,
+  (s) => {
+    if (s === 'neighborhood') void loadActors()
+    // 离开小区图时把面板收掉：立绘的 73MB 必须在离开那一刻还回去
+    if (s !== 'neighborhood' && wsPanel.open.value) wsPanel.closePanel()
+  },
+)
+
+// 人物名单/坐标变化（换角色、走位、重算散点）→ 补齐 runtime。
+// 用 deep 会在地图手势的每一帧触发，所以这里只看「个数 + 关键坐标」这个指纹。
+watch(
+  () => placedActors.value.map((a) => `${a.id}:${a.gx},${a.gy},${a.place}`).join('|'),
+  () => scheduleSyncRuntime('actors-changed'),
+)
+
+// 行政区链路变了（面包屑回退/换了区县）也要推：scene.area 是注入的第一行
+watch(
+  () => `${areaLabel.value}|${leaf.value?.adcode || ''}`,
+  () => scheduleSyncRuntime('area-changed'),
+)
+
+onBeforeUnmount(() => {
+  // 离开页面：面板关掉（立绘随之释放）+ 清掉还在排队的 toast 定时器
+  wsPanel.closePanel()
+  clearToasts()
+  if (syncTimer !== null) window.clearTimeout(syncTimer)
+  // ⚠️ 必须清：注入的开关就是「runtime 里有没有 scene」，
+  // 不清的话回到聊天页会继续带着上次的地图上下文跟模型说话。
+  void clearRuntime()
+})
 
 onMounted(() => {
   void start()
@@ -514,5 +854,50 @@ onMounted(() => {
 }
 .ws-foot__err {
   margin-top: 0.2em;
+}
+
+/* ── P2：地图上的小人浮标 + toast ───────────────────────────────────────── */
+.ws-people {
+  position: absolute;
+  /* 抬到 .ws-zoomctl（同样钉在右下角，bottom:0.7em）上面，别把缩放按钮盖住 */
+  right: 0.7em;
+  bottom: 3.7em;
+  display: flex;
+  gap: 0.4em;
+  z-index: 5;
+}
+.ws-toasts {
+  position: absolute;
+  left: 50%;
+  bottom: 5.2em;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35em;
+  pointer-events: none;
+  z-index: 40;
+}
+.ws-toast {
+  max-width: 22em;
+  padding: 0.35em 0.85em;
+  font-size: 0.94em;
+  line-height: 1.6;
+  border-radius: 999px;
+  background: var(--ws-panel);
+  border: 1px solid var(--ws-border);
+  box-shadow: var(--ws-shadow);
+  backdrop-filter: blur(var(--ws-blur));
+  -webkit-backdrop-filter: blur(var(--ws-blur));
+  animation: ws-fade-up 0.24s ease both;
+}
+.ws-toast--ok {
+  border-color: var(--ws-ok);
+}
+.ws-toast--warn {
+  border-color: var(--ws-warn);
+}
+.ws-toast--err {
+  border-color: var(--ws-err);
 }
 </style>

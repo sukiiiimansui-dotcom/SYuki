@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="轮渡">
+<!-- 世界模拟 · 交通工具立绘 · 轮渡 · 手绘扁平 SVG（无第三方素材授权问题） -->
+<path d="M6 44 h52 l-6 8 h-40z" fill="#5a7ba8"/>
+      <rect x="18" y="30" width="28" height="12" rx="3" fill="#eef4fb"/>
+      <rect x="22" y="33" width="6" height="6" rx="1.5" fill="#a8c8e8"/>
+      <rect x="31" y="33" width="6" height="6" rx="1.5" fill="#a8c8e8"/>
+      <rect x="40" y="33" width="4" height="6" rx="1.5" fill="#a8c8e8"/>
+      <rect x="30" y="20" width="4" height="10" rx="2" fill="#7fb6e0"/>
+      <path d="M6 52 h52" stroke="#8fd6c0" stroke-width="3" stroke-linecap="round"/>
+</svg>

@@ -260,6 +260,12 @@ pub fn run() {
             app.manage(lan_sync::LanSyncState::default());
             app.manage(utils::cpu_perf::CpuDetectionCache::new());
             app.manage(api::role_archive::RoleArchiveState::default());
+            // 世界模拟的地图运行时状态（P3）。
+            // 单独一个状态壳、**不并进 AppState**：地图是旁路模块，塞进 AppState
+            // 会让它从「可整块删除」变成牵着对话主干（理由详见 world_map/state.rs
+            // 的模块注释）。这里 manage 的 `Arc` 与 `state.rs` 里那个进程级 static
+            // 是**同一个**，所以注入路径（拿不到 AppHandle）读到的是同一份数据。
+            app.manage(world_map::state::handle());
 
             // Android 修复：Tauri 在 setup 闭包执行前已创建 webview 窗口，前端 invoke
             // 命令会在 IPC runtime worker 上立即 dispatch；如果 AppState 还没 manage
@@ -584,6 +590,23 @@ pub fn run() {
             // 前缀同样是**必须的**：命令宏在定义处 world_map/live.rs 生成
             world_map::live::world_map_location,
             world_map::live::world_map_weather,
+            // ── 世界模拟运行时状态（P3：前端推状态 / 读状态）──
+            // 前缀同样是必须的（宏在定义处 world_map/state.rs 生成）
+            world_map::state::world_map_update_runtime,
+            world_map::state::world_map_runtime,
+            // ── 世界模拟移动状态机（P4：AI 位置指令 → 角色在地图上移动）──
+            // 前缀同样是必须的：宏在定义处 world_map/move_cmd.rs 生成，写
+            // `world_map::world_map_trip_status` 会在编译期直接 E0433（本项目踩过）。
+            world_map::move_cmd::world_map_trip_status,
+            world_map::move_cmd::world_map_trip_start,
+            world_map::move_cmd::world_map_trip_cancel,
+            world_map::move_cmd::world_map_trip_speedup,
+            // ── 世界模拟现实事件引擎（P5-2/P5-3：驱动器 / 读最近事件 / 取待写记忆）──
+            // 前缀同样是必须的：宏在定义处 world_map/event_cmd.rs 生成，写
+            // `world_map::world_map_tick` 会在编译期直接 E0433（本项目踩过）。
+            world_map::event_cmd::world_map_tick,
+            world_map::event_cmd::world_map_events_recent,
+            world_map::event_cmd::world_map_take_pending_memory,
             utils::log_bridge::get_log_history,
             utils::log_bridge::open_log_window,
             utils::log_bridge::is_log_window_open,

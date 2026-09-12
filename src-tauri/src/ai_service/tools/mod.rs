@@ -14,6 +14,10 @@ pub mod skill_files;
 pub mod status;
 pub mod tool_loop;
 pub mod web_search;
+// 世界模拟（P3）：get_my_location / get_nearby_facilities / move_to。
+// 注意这个 `world_map` 是**聊天工具的模块名**，与 `crate::world_map`（地图后端）
+// 同名但不是一回事；工具内部一律用 `crate::world_map::…` 全路径引用。
+pub mod world_map;
 
 use std::io::Write;
 use std::path::Path;
@@ -44,6 +48,7 @@ use skill_files::{
 };
 use status::{CurrentStatus, SceneStatus};
 use web_search::WebSearchTool;
+use world_map::{GetMyLocation, GetNearbyFacilities, MoveTo};
 
 /// 从 AppHandle 获取共享的 `GameStatus` 句柄。
 ///
@@ -117,6 +122,12 @@ pub fn built_in_registry(
     registry.register(Arc::new(SceneStatus))?;
     registry.register(Arc::new(SceneList))?;
     registry.register(Arc::new(SceneSwitch))?;
+    // 世界模拟（P3）：三个**只读缓存状态**的工具。
+    // 权限不用改：`UserChat → scene_admin → all_tools:true`（permissions.rs）自动放行；
+    // 工具一旦注册就进 available_tools，用户在前端的「工具开关」里也能看到。
+    registry.register(Arc::new(GetMyLocation))?;
+    registry.register(Arc::new(GetNearbyFacilities))?;
+    registry.register(Arc::new(MoveTo))?;
     registry.register(Arc::new(CharacterList))?;
     registry.register(Arc::new(CharacterSwitch))?;
     registry.register(Arc::new(ListSkills))?;

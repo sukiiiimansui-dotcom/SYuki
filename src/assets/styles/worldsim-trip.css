@@ -1,0 +1,421 @@
+/* ============================================================================
+ * 「世界模拟」P4-2 / P4-3：行程卡 + 交通工具标记的样式
+ *
+ * 规矩（与另一个代理并行改 worldsim.css，所以：
+ *   · 本文件**只**出现在这两个新组件里（各自 `import` 一次，Vite 会去重）；
+ *   · **所有**选择器都以 `.ws-` 开头，绝不出现 `body` / `html` / `:root` / `*` 这类
+ *     全局选择器 —— 打开世界模拟之外的页面时，这份文件也必须「什么都没做」；
+ *   · 颜色一律走 worldsim.css 已定义的主题变量（带兜底值，单独用也不至于没颜色），
+ *     所以薄荷奶油 / 毛玻璃 / 深色三套皮肤**自动**跟着变，不需要三份样式。
+ *
+ * 深色兜底：主题变量在 `.ws-root.theme-mint.ws-dark` 这类组合下就换了值，正常情况
+ * 这里不用管；只有「变量没覆盖到的视觉」（图标投影、进度条轨道、加速按钮的荧光）
+ * 才需要 `.ws-dark` / `.ws-sys-dark` 两条显式兜底 —— 都写成 `祖先.类 .ws-子元素`
+ * 的去处，不是全局选择器。
+ * ========================================================================== */
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 一、行程卡
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+.ws-trip {
+  /* 字号只认外层给的 --ws-fs；没有就兜 13px（独立演示时也不至于 16px 那么大） */
+  font-size: var(--ws-fs, 13px);
+  box-sizing: border-box;
+  width: min(21em, 86vw);
+  padding: 0.7em 0.8em 0.6em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  color: var(--ws-fg, #4a5b63);
+  background: var(--ws-panel, rgba(255, 255, 255, 0.86));
+  border: 1px solid var(--ws-border, rgba(143, 214, 192, 0.38));
+  border-radius: var(--ws-radius, 16px);
+  box-shadow: var(--ws-shadow, 0 4px 14px rgba(90, 120, 130, 0.1));
+  backdrop-filter: blur(var(--ws-blur, 0px));
+  -webkit-backdrop-filter: blur(var(--ws-blur, 0px));
+  animation: ws-trip-in 0.22s ease both;
+}
+
+/* 浮在地图角上：默认左下角（右下的 `.ws-people` 浮标不被盖住） */
+.ws-trip.is-floating {
+  position: absolute;
+  left: 0.7em;
+  bottom: 0.7em;
+  z-index: 6;
+  margin: 0;
+}
+.ws-trip.is-floating.is-right {
+  left: auto;
+  right: 0.7em;
+}
+
+.ws-trip__empty {
+  font-size: 0.92em;
+  color: var(--ws-fg-dim, #7d8f96);
+  text-align: center;
+  padding: 0.3em 0;
+}
+
+/* ── 头部：图标 + 出发地→目的地 + 状态 ─────────────────────────────────── */
+.ws-trip__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  min-width: 0;
+}
+.ws-trip__ico {
+  flex: none;
+  width: 1.9em;
+  height: 1.9em;
+  object-fit: contain;
+  /* 深色地图 / 深色卡片上，浅色立绘要有自己的边界 */
+  filter: drop-shadow(0 1px 2px rgba(30, 45, 50, 0.35));
+}
+.ws-trip__route {
+  flex: 1;
+  min-width: 0;
+}
+.ws-trip__names {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3em;
+  min-width: 0;
+  font-size: 1.02em;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.ws-trip__from,
+.ws-trip__to {
+  max-width: 8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-trip__to {
+  color: var(--ws-primary-deep, #62b79d);
+}
+.ws-trip__arrow {
+  flex: none;
+  color: var(--ws-fg-dim, #7d8f96);
+  font-weight: 400;
+}
+.ws-trip__sub {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  margin-top: 0.1em;
+  font-size: 0.86em;
+  color: var(--ws-fg-dim, #7d8f96);
+  min-width: 0;
+}
+.ws-trip__who {
+  max-width: 7em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-trip__auto {
+  font-size: 0.94em;
+  opacity: 0.85;
+}
+.ws-trip__dot {
+  color: var(--ws-fg-dim, #7d8f96);
+  opacity: 0.7;
+}
+.ws-trip__status {
+  flex: none;
+  align-self: flex-start;
+  padding: 0.1em 0.5em;
+  font-size: 0.82em;
+  line-height: 1.6;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--ws-on-primary, #17332c);
+  background: var(--ws-primary-soft, rgba(143, 214, 192, 0.18));
+  border: 1px solid var(--ws-border, rgba(143, 214, 192, 0.38));
+}
+.ws-trip.is-arrived .ws-trip__status {
+  color: #1f3a2c;
+  background: var(--ws-ok, #6cc39a);
+  border-color: transparent;
+}
+.ws-trip.is-cancelled .ws-trip__status {
+  color: var(--ws-fg, #4a5b63);
+  background: var(--ws-panel-2, rgba(255, 255, 255, 0.62));
+}
+
+/* ── 进度条：轨道 + 填充（填充由 rAF 改 transform: scaleX()）───────────── */
+.ws-trip__bar {
+  position: relative;
+  height: 0.5em;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--ws-primary-soft, rgba(143, 214, 192, 0.18));
+  box-shadow: inset 0 0 0 1px var(--ws-border, rgba(143, 214, 192, 0.38));
+}
+.ws-trip__fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: linear-gradient(
+    90deg,
+    var(--ws-primary, #8fd6c0) 0%,
+    var(--ws-primary-deep, #62b79d) 100%
+  );
+  /* 只动 transform：不触发布局，手机上也是合成层里跑 */
+  will-change: transform;
+  transition: background 0.2s ease;
+}
+.ws-trip.is-arrived .ws-trip__fill {
+  background: var(--ws-ok, #6cc39a);
+}
+.ws-trip.is-cancelled .ws-trip__fill {
+  background: var(--ws-fg-dim, #7d8f96);
+  opacity: 0.7;
+}
+
+/* ── 四项数字 ─────────────────────────────────────────────────────────── */
+.ws-trip__stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.25em 0.6em;
+}
+.ws-trip__stat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.35;
+}
+.ws-trip__stat b {
+  font-size: 0.98em;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-trip__stat em {
+  font-style: normal;
+  font-size: 0.8em;
+  color: var(--ws-fg-dim, #7d8f96);
+}
+
+/* ── 底部操作：100× 加速 + 取消 ────────────────────────────────────────── */
+.ws-trip__foot {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  flex-wrap: wrap;
+}
+.ws-trip__spacer {
+  flex: 1;
+}
+.ws-trip__hint {
+  font-size: 0.8em;
+  color: var(--ws-fg-dim, #7d8f96);
+  white-space: nowrap;
+}
+
+.ws-trip__fast,
+.ws-trip__cancel {
+  font: inherit;
+  font-size: 0.9em;
+  padding: 0.3em 0.75em;
+  border-radius: 999px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+.ws-trip__fast {
+  color: var(--ws-fg, #4a5b63);
+  background: var(--ws-panel-2, rgba(255, 255, 255, 0.62));
+  border: 1px solid var(--ws-border, rgba(143, 214, 192, 0.38));
+}
+.ws-trip__fast.is-ready:hover {
+  border-color: var(--ws-primary-deep, #62b79d);
+}
+.ws-trip__fast.is-on {
+  color: var(--ws-on-primary, #17332c);
+  background: var(--ws-warn, #e8b86d);
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--ws-primary-soft, rgba(143, 214, 192, 0.18));
+  animation: ws-trip-pulse 1.6s ease-in-out infinite;
+}
+.ws-trip__cancel {
+  color: var(--ws-fg, #4a5b63);
+  background: transparent;
+  border: 1px solid var(--ws-border, rgba(143, 214, 192, 0.38));
+}
+.ws-trip__fast:active,
+.ws-trip__cancel:active {
+  transform: scale(0.96);
+}
+.ws-trip__fast:disabled,
+.ws-trip__cancel:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.ws-trip__cancel:hover:not(:disabled) {
+  border-color: var(--ws-err, #e08d8d);
+  color: var(--ws-err, #e08d8d);
+}
+.ws-trip__fast:focus-visible,
+.ws-trip__cancel:focus-visible {
+  outline: 2px solid var(--ws-primary-deep, #62b79d);
+  outline-offset: 1px;
+}
+
+/* 窄屏（手机）：卡片更宽、数字仍然两列（中文数字短，一列反而浪费竖向空间） */
+@media (max-width: 480px) {
+  .ws-trip {
+    width: min(21em, 92vw);
+    font-size: var(--ws-fs, 12.6px);
+  }
+  .ws-trip__from,
+  .ws-trip__to {
+    max-width: 6.5em;
+  }
+}
+
+/* 宽屏（桌面）：允许一行四项，卡片不至于太胖 */
+@media (min-width: 720px) {
+  .ws-trip__stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 二、地图上的交通工具标记
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+.ws-veh {
+  position: absolute;
+  inset: 0;
+  /* 这一层只是个定位参照：绝不能吃掉地图手势的事件 */
+  pointer-events: none;
+  /* 压在人物层（.ws-avs 是 z-index:3）**下面**：视觉上「车托着人」 */
+  z-index: 2;
+}
+.ws-veh.is-click {
+  pointer-events: auto;
+}
+
+.ws-veh__ico {
+  position: absolute;
+  display: block;
+  object-fit: contain;
+  /* 位置与缩放由组件按 zoom 动态算（见 icoStyle），这里只留兜底 */
+  transform: translate(-50%, -50%);
+  transform-origin: center center;
+  cursor: inherit;
+  -webkit-user-drag: none;
+  user-select: none;
+  /* 浅色立绘在浅色地图上要有边界；深色主题下面再加重一档 */
+  filter: drop-shadow(0 1px 2px rgba(35, 55, 60, 0.35));
+  transition: filter 0.2s ease;
+}
+.ws-veh.is-flip .ws-veh__ico {
+  /* 镜像由 transform 里的负 scale 完成（保持居中不变），这里不做任何事 */
+  transform-origin: center center;
+}
+/* 步行（showWalk 打开时才画）：比车小一点、更贴地 */
+.ws-veh__ico--walk {
+  opacity: 0.9;
+}
+
+.ws-veh__label {
+  position: absolute;
+  /* 标签的 transform-origin 必须是**上边中点**：
+     `translate(-50%,0) scale(1/k)` 里，translate 用未缩放的宽度算，
+     只有 origin 在顶部时「上边缘」才不会被缩放推下去（图标用默认中心 origin 是对的）。 */
+  transform-origin: top center;
+  padding: 0 0.3em;
+  font-size: 0.72em;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--ws-fg, #4a5b63);
+  background: var(--ws-panel, rgba(255, 255, 255, 0.86));
+  border: 1px solid var(--ws-border, rgba(143, 214, 192, 0.38));
+  border-radius: 999px;
+  backdrop-filter: blur(var(--ws-blur, 0px));
+  -webkit-backdrop-filter: blur(var(--ws-blur, 0px));
+}
+
+/* 深色：立绘本身颜色偏浅，加重一档投影才在暗底上「立」得起来；
+   标签底色也跟着卡片走（主题变量已换，这里只补投影与描边） */
+.ws-dark .ws-veh__ico,
+.ws-sys-dark .ws-veh__ico {
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 6px rgba(0, 0, 0, 0.3));
+}
+.ws-dark .ws-trip__ico,
+.ws-sys-dark .ws-trip__ico {
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+}
+.ws-dark .ws-trip__bar,
+.ws-sys-dark .ws-trip__bar {
+  background: rgba(255, 255, 255, 0.08);
+}
+.ws-dark .ws-trip__fast.is-on,
+.ws-sys-dark .ws-trip__fast.is-on {
+  color: #2b2110;
+}
+.ws-dark .ws-veh__label,
+.ws-sys-dark .ws-veh__label {
+  color: var(--ws-fg, #d7e6e2);
+}
+
+/* 毛玻璃主题：卡片本来就是半透明的，这里只把投影收一点，免得糊成一团 */
+.ws-root.theme-glass .ws-trip {
+  box-shadow: var(--ws-shadow-lg, 0 10px 30px rgba(90, 120, 130, 0.16));
+}
+
+/* 系统深色 + 用户没显式选浅色时（`.ws-sys-dark` 的语义），进度条轨道再压一档 */
+@media (prefers-color-scheme: dark) {
+  .ws-sys-dark .ws-trip__bar {
+    background: rgba(255, 255, 255, 0.08);
+  }
+}
+
+/* 不支持 backdrop-filter：退回不透明底（否则毛玻璃皮肤下会看不清字） */
+@supports not (backdrop-filter: blur(1px)) {
+  .ws-trip,
+  .ws-veh__label {
+    background: var(--ws-panel, rgba(255, 255, 255, 0.96));
+  }
+}
+
+/* 动画：淡入 + 加速中的呼吸。关掉动效的人只留淡入（不做无限动画） */
+@keyframes ws-trip-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.35em);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes ws-trip-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--ws-primary-soft, rgba(143, 214, 192, 0.18));
+  }
+  50% {
+    box-shadow: 0 0 0 4px var(--ws-primary-soft, rgba(143, 214, 192, 0.3));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws-trip {
+    animation: none;
+  }
+  .ws-trip__fast.is-on {
+    animation: none;
+  }
+  .ws-trip__fast,
+  .ws-trip__cancel {
+    transition: none;
+  }
+}

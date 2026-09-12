@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="高铁">
+<!-- 世界模拟 · 交通工具立绘 · 高铁 · 手绘扁平 SVG（无第三方素材授权问题） -->
+<path d="M5 36 c0-7 4-12 11-14 l18-7 c4.5-1.8 9-2.6 13-2.6 7 0 12 5 12 12 v12 a7 7 0 0 1 -7 7 H12 a7 7 0 0 1 -7-7z" fill="#a8c8e8"/>
+  <path d="M13 32 h44" stroke="#eef4fb" stroke-width="3.2" stroke-linecap="round"/>
+  <rect x="19" y="21" width="9" height="8" rx="2.2" fill="#eef4fb"/>
+  <rect x="32" y="17" width="9" height="8" rx="2.2" fill="#eef4fb"/>
+  <rect x="45" y="13" width="7" height="8" rx="2.2" fill="#eef4fb"/>
+  <rect x="9" y="43" width="50" height="5" rx="2.5" fill="#5a7ba8"/>
+  <circle cx="18" cy="53" r="4.4" fill="#3c4b5f"/>
+  <circle cx="46" cy="53" r="4.4" fill="#3c4b5f"/>
+</svg>

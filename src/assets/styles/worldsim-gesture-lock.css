@@ -1,0 +1,55 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 【L-SYuki 线专用 · 提 PR 时**整份文件**剔除】浏览器手势抑制（B 部分）
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * 这个文件**不属于「世界模拟」的功能**，它只是让本地/预览环境（手机 WebView 里
+ * 用 vite dev 或打包后的 APK）用起来不别扭：不加它，在舞台上滑动会被浏览器
+ * 当成滚页面/下拉刷新，地图拖不动（机主实测反馈）。
+ *
+ * 为什么单独一个文件、而不是写进 worldsim.css：
+ *   ① 提 PR 的**文件白名单**（docs/world-map/09 的 3.1）天然不含它 —— 剔除时
+ *      一个文件整份删掉即可，不会漏，也不会有半截样式留在 PR 里；
+ *   ② 反过来，如果把它混在 worldsim.css 里，剔除就只能靠人对着一大段 CSS
+ *      找边界 —— 那是一种「忘了也没人发现」的失败方式；
+ *   ③ 万一忘了删这里的引用，构建会**当场报错**（找不到文件），而不是悄悄把
+ *      抑制样式带进 PR —— 失败要看得见，这是本项目的既有纪律。
+ *
+ * 硬约束（机主明确要求）：**绝不写 body / html / :root / 任何全局选择器**，
+ * 所有规则都必须挂在 `.ws-root.ws-nogesture` 下面；`ws-nogesture` 这个类由
+ * `src/composables/useWorldSimGestures.ts` 在挂载时打到 `.ws-root` 上。
+ * 于是这个文件一旦被删，那个类就变成一个没有任何规则的死类，代码无需改动。
+ *
+ * 怎么剔（精确到行，见 docs/world-map/09 的「九、PR 排除清单」）：
+ *   1. 删除本文件（共 67 行，全文件）；
+ *   2. 删除 `src/components/views/worldsim/WorldSim.vue` 里的两行 import
+ *      （带【PR 排除】banner 的那两行）；
+ *   3. `useWorldSimGestures.ts` 里 `root?.classList.add('ws-nogesture')` 一行
+ *      **可以留着**（死类，无副作用）；想干净也可以一起删。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* 舞台表面：把浏览器的默认触摸手势（滚动 / 下拉刷新 / 长按选择 / 长按弹出菜单）
+ * 从这两块区域里彻底关掉，Pointer Events 才能持续收到 pointermove。
+ * 只作用于世界模拟自己的两个舞台容器。 */
+.ws-root.ws-nogesture .ws-geo,
+.ws-root.ws-nogesture .ws-neigh,
+.ws-root.ws-nogesture .ws-geo__pan,
+.ws-root.ws-nogesture .ws-neigh__pan {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 页面根：阻止滚动链（scroll chaining）传到外层文档 —— 手机上的「下拉刷新」
+ * 往往就是这么被触发的。写在自己的根容器上，不碰 body/html。 */
+.ws-root.ws-nogesture {
+  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
+}
+
+/* 缩放控件也是触摸目标：连点两下不该被当成双击缩放页面 */
+.ws-root.ws-nogesture .ws-zoomctl button {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}

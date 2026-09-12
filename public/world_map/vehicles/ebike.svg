@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="电动车">
+<!-- 世界模拟 · 交通工具立绘 · 电动车 · 手绘扁平 SVG（无第三方素材授权问题） -->
+<circle cx="15" cy="47" r="9" fill="none" stroke="#5a7ba8" stroke-width="3.6"/>
+  <circle cx="49" cy="47" r="9" fill="none" stroke="#5a7ba8" stroke-width="3.6"/>
+  <path d="M15 47 h13 a7 7 0 0 0 7-7 v-3 h9 l5 10" fill="none" stroke="#8fd6c0" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="22" y="29" width="19" height="7" rx="3.5" fill="#8fd6c0"/>
+  <path d="M44 37 l6-15" stroke="#7fb6e0" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M47 22 h8" stroke="#7fb6e0" stroke-width="3.4" stroke-linecap="round"/>
+  <circle cx="53" cy="29" r="3.2" fill="#ffd166"/>
+  <circle cx="29" cy="24" r="4.6" fill="#ffb4a2"/>
+</svg>

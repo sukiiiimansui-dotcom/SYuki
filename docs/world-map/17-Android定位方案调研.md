@@ -641,5 +641,3 @@ PY
 git ls-files src-tauri/gen/android | grep java
 # src-tauri/gen/android/app/src/main/java/com/syuki/lingchat/MainActivity.kt
 ```
-
----

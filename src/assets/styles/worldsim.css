@@ -416,6 +416,61 @@
   position: relative;
   width: 100%;
   height: 100%;
+  /* 缩放/平移后超出舞台的部分裁掉（transform 的溢出不会被父级自动裁） */
+  overflow: hidden;
+}
+/* ── 手势的**变换容器**（A 部分：地图手势本体，PR 里应该有）─────────────
+ * 为什么要有这么一层：平移/缩放只改这个 div 的 transform，
+ * **绝不碰后端 SVG 本体** —— 那个 SVG 是 v-html 注进来的文本，
+ * 每次换级/流式重绘都会重建，改它的 viewBox/坐标必然打架（见 useWorldSimGestures 的说明）。
+ * transform-origin 必须是 0 0：手势数学全部以舞台左上角为原点推的。 */
+.ws-geo__pan {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  /* 松手/复位时的顺滑；拖动中由 .is-drag 关掉（跟手优先） */
+  transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.ws-geo__pan.is-drag {
+  transition: none;
+}
+/* 缩放控件：给不会手势的人（和桌面鼠标）一条明路，也方便自检时肉眼确认钳制 */
+.ws-zoomctl {
+  position: absolute;
+  right: 0.7em;
+  bottom: 0.7em;
+  display: flex;
+  gap: 0.3em;
+  padding: 0.25em;
+  border-radius: 999px;
+  background: var(--ws-panel);
+  border: 1px solid var(--ws-border);
+  box-shadow: var(--ws-shadow);
+  backdrop-filter: blur(var(--ws-blur));
+  -webkit-backdrop-filter: blur(var(--ws-blur));
+}
+.ws-zoomctl button {
+  width: 1.9em;
+  height: 1.9em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 0.95em;
+  line-height: 1;
+  color: var(--ws-fg);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.ws-zoomctl button:hover:not(:disabled) {
+  background: var(--ws-primary-soft);
+}
+.ws-zoomctl button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .ws-geo :deep(svg) {
   width: 100%;
@@ -488,6 +543,16 @@
   align-items: center;
   justify-content: center;
   transition: opacity 0.5s ease;
+}
+.ws-neigh__pan {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+  transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.ws-neigh__pan.is-drag {
+  transition: none;
 }
 .ws-paint-host {
   width: 100%;
@@ -587,3 +652,79 @@
   background: var(--ws-border);
   border-radius: 999px;
 }
+
+/* ============================================================================
+ * P2：面板 / 头像 / 小地图的**公共零件**（组件里只写自己那点布局，通用件放这里）
+ *
+ * 纪律与 P1 一致：全部 ws- 前缀、全部挂在 .ws-root 下（靠变量取色），
+ * 绝不写 :root / body 这类全局选择器 —— 世界模拟没打开时这些规则一条都不生效。
+ * ========================================================================== */
+
+/* 通用占位（把「行内撑开」和「两端对齐」这两个高频需求收成一个类） */
+.ws-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 小圆角标签（比 .ws-tag 更小一号，用在面板的小计数上） */
+.ws-chip {
+  padding: 0.12em 0.62em;
+  font: inherit;
+  font-size: 0.82em;
+  color: var(--ws-fg-dim);
+  background: var(--ws-panel-2);
+  border: 1px solid var(--ws-border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+.ws-chip.is-on {
+  color: var(--ws-on-primary);
+  background: var(--ws-primary);
+  border-color: transparent;
+}
+
+/* 「在场/在线」这种活体标记（薄荷套给绿色，玻璃套给蓝紫，都取主色） */
+.ws-tag--live {
+  color: var(--ws-on-primary);
+  background: var(--ws-primary);
+}
+
+/* 空态：不许是光秃秃一行字（P2-4 明确要求「空态要好看」） */
+.ws-empty {
+  padding: 0.6em 0.2em;
+  font-size: 0.88em;
+  color: var(--ws-fg-dim);
+}
+.ws-empty--big {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3em;
+  padding: 1.4em 0.6em;
+  text-align: center;
+}
+.ws-empty__ico {
+  font-size: 2.4em;
+  line-height: 1;
+  animation: ws-float 4.2s ease-in-out infinite;
+}
+.ws-empty__t {
+  font-weight: 600;
+  color: var(--ws-fg);
+}
+.ws-empty__s {
+  font-size: 0.88em;
+}
+
+/* 面板滑入 / 遮罩淡入（抽屉动画；prefers-reduced-motion 那条规则会自动把它压掉） */
+@keyframes ws-slide-in {
+  from { transform: translateX(14px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* 地图上的头像层：绝对不能吃掉地图手势（头像自己是唯一的洞，见组件里的 scoped 样式） */
+.ws-avs {
+  pointer-events: none;
+}
+

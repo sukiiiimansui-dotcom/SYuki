@@ -22,6 +22,9 @@ use tokio::sync::{mpsc, Mutex};
 use crate::ai_service::llm::{ChunkStream, LlmChunk};
 use crate::ai_service::message_system::events;
 use crate::ai_service::message_system::processor::fix_ai_generated_text;
+// 世界模拟（P4-1）：AI 位置指令 `⟦wm:{…}⟧` 的剥离器。
+// 关掉世界模拟时它是**恒等函数**，本文件的行为与改造前逐字节一致（见 directive.rs）。
+use crate::world_map::directive::Scanner;
 
 /// 一个完整情绪段的投递项：(句子文本, 有序索引, 是否为最后一项)
 pub type SentenceItem = (String, usize, bool);
@@ -34,6 +37,13 @@ pub struct StreamProducer {
     thinking_buf: Arc<Mutex<String>>,
     /// 工具闭环执行过工具后，暂存最后一条有效句子，直到能确定真正的收尾句。
     tool_calls_seen: Arc<AtomicBool>,
+    /// 世界模拟的位置指令剥离器（P4-1）。
+    ///
+    /// **构造时就定死开关**：世界模拟开着才启用；关着时 [`Scanner::push`] 原样返回，
+    /// 等价于本文件里没有这个字段（提 PR 的红线，详见 `world_map/directive.rs`）。
+    /// 放在 producer 而不是 processor：只有在切句之前摘掉，指令才不会流进
+    /// 情绪分类/翻译/TTS/历史行/前端事件。
+    scanner: Scanner,
 }
 
 impl StreamProducer {
@@ -50,10 +60,16 @@ impl StreamProducer {
             app,
             thinking_buf,
             tool_calls_seen,
+            scanner: Scanner::new(crate::world_map::state::world_sim_enabled()),
         }
     }
 
-    /// 消耗整个 LLM 流；返回原始 accumulated_response（未拆分）。
+    /// 消耗整个 LLM 流；返回 accumulated_response（未拆分）。
+    ///
+    /// 世界模拟开着时，返回值里**不含**位置指令：那是给移动状态机的控制信号，
+    /// 不是正文。`generator.rs` 还拿它判"模型是不是什么都没回"（空回复兜底），
+    /// 指令不能算回复内容 —— 否则模型只吐一条指令时前端会一直停在「思考中」。
+    /// 世界模拟没开时这就是流里的原始正文，与改造前逐字节一致。
     pub async fn run(mut self) -> Result<String> {
         let mut accumulated = String::new();
         let mut realtime_buffer = String::new();
@@ -73,9 +89,14 @@ impl StreamProducer {
             let chunk = item?;
             match chunk {
                 LlmChunk::Content(text) => {
-                    buffer.push_str(&text);
-                    accumulated.push_str(&text);
-                    realtime_buffer.push_str(&text);
+                    // 世界模拟的位置指令在**切句之前**摘掉：`visible` 才是正文。
+                    // 没有指令（或世界模拟没开）时 `visible` 就是 `text` 本身，
+                    // 下面三行的字节与改造前完全一致（`Cow::Borrowed`，零拷贝）。
+                    let visible = self.scanner.push(&text);
+                    buffer.push_str(&visible);
+                    accumulated.push_str(&visible);
+                    realtime_buffer.push_str(&visible);
+                    drop(visible);
 
                     let now = Instant::now();
                     if realtime_buffer.chars().count() >= 3
@@ -198,6 +219,15 @@ impl StreamProducer {
             }
         }
 
+        // 世界模拟（P4-1）：把剥离器里还挂着的尾巴吐回正文。
+        // 只有"见过 ⟦ 但还没确认是不是指令"（最多 3 个字符）才非空；
+        // 没出现过 ⟦ 时恒为空串 —— 这一小段对旧行为零影响。
+        let tail = self.scanner.finish();
+        if !tail.is_empty() {
+            buffer.push_str(&tail);
+            realtime_buffer.push_str(&tail);
+        }
+
         // flush 剩余实时缓冲
         if !realtime_buffer.trim().is_empty() {
             print!("{}", realtime_buffer);
@@ -237,6 +267,16 @@ impl StreamProducer {
             }
         } else if let Some(pending) = pending_sentence.take() {
             Self::send_sentence(&self.tx, pending, &mut sentence_index, true).await?;
+        }
+
+        // 世界模拟（P4-1）：位置指令派发。
+        //
+        // 放在**所有句子都投递完之后**：指令本身从头到尾没进过 buffer，所以这里
+        // 怎么动状态机都不会影响已经切好的句子。多条时取最后一条（模型最后的表态）。
+        // 世界模拟没开、或本轮没有指令 → `directives` 为空 → 一次函数调用都不发生。
+        let directives = self.scanner.take_directives();
+        if !directives.is_empty() {
+            crate::world_map::move_cmd::dispatch_directives(&self.app, &directives);
         }
 
         Ok(accumulated)

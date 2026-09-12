@@ -876,8 +876,36 @@ fn mk_fac(
         "type": typ, "type_zh": meta.zh, "name": nm,
         "icon": meta.icon, "color": [meta.color.0, meta.color.1, meta.color.2],
         "group": meta.group,
+        "indoor": indoor_of(typ),
         "cell_meters": state.mpc,
     })
+}
+
+/// 这个类型的设施算不算「室内」。
+///
+/// **为什么必须有这个字段**：事件引擎（`world_map/event_cmd.rs::build_context`）
+/// 把「室内外」当作一类闸门 —— 停电 / 停水 / 失眠 / 睡过头这批事件**只在室内**才开闸。
+/// 而在此之前 `mk_fac` 根本不产出这个字段，于是：
+///   `facility_indoor()` 恒返回 `None` → `indoors` 恒为 `false`（按户外）
+///   → 那批室内事件**永远不会发生**，而且不报错、不打日志，只是"从来没见过停电"。
+///
+/// 口径按常识分（拿不准的一律按**户外**，与 `events.rs` 已声明的保守取舍一致：
+/// 宁可漏掉一次室内事件，也不要让角色在大街上"因为停电而害怕"）：
+///   · 室内：住宅 / 商业 / 教育 / 医疗 / 市政服务 / 住宿 / 机场 / 火车站 / 地铁站
+///   · 户外：公交站 / 停车场 / 加油站 / 码头 / 休闲娱乐（多半指公园）
+pub fn indoor_of(typ: &str) -> bool {
+    matches!(
+        typ,
+        "residential"
+            | "commercial"
+            | "education"
+            | "medical"
+            | "civic"
+            | "lodging"
+            | "airport"
+            | "train_station"
+            | "subway"
+    )
 }
 
 /// 按规则放 n 个同一类型的设施；放不下就少放 —— 对应 `_place_type`。

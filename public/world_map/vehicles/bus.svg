@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="公交">
+<!-- 世界模拟 · 交通工具立绘 · 公交 · 手绘扁平 SVG（无第三方素材授权问题） -->
+<rect x="8" y="14" width="48" height="32" rx="8" fill="#8fd6c0"/>
+      <rect x="13" y="19" width="15" height="12" rx="3" fill="#e8f6f1"/>
+      <rect x="32" y="19" width="15" height="12" rx="3" fill="#e8f6f1"/>
+      <circle cx="20" cy="49" r="6" fill="#3c4b5f"/>
+      <circle cx="44" cy="49" r="6" fill="#3c4b5f"/>
+      <rect x="8" y="36" width="48" height="4" fill="#6bbfa4" opacity=".7"/>
+</svg>
