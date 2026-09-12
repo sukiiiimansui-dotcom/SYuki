@@ -55,13 +55,33 @@ jobs:
       - name: 生成全套图标
         run: pnpm tauri icon src-tauri/icons/icon.png
 
-      - name: Prepare Android project (drop gen/android so tauri regenerates with current identifier)
-        run: |
-          rm -rf src-tauri/gen/android
-          pnpm android:prepare
+      # ⚠️ 这一行**绝对不要**改回 `rm -rf src-tauri/gen/android`（2026-09-12 修）
+      #
+      # 原来那版是「rm -rf gen/android + tauri android init」，注释说"so tauri regenerates
+      # with current identifier"。听着合理，实际会**把自写的 Android 文件全删掉**：
+      #   · `app/src/main/java/com/syuki/lingchat/location/LocationPlugin.kt`（421 行，GPS 插件本体）
+      #   · `AndroidManifest.xml` 里的 ACCESS_FINE_LOCATION / ACCESS_COARSE_LOCATION 权限声明
+      #   · proguard 规则等
+      # `tauri android init` **不会**把这些重新生成 —— 它只产出一个原版 Android 工程。
+      # 后果：打出来的 APK **没有定位能力**（Rust 侧 `loc_android::init()` 注册的插件在
+      # Kotlin 侧根本不存在），而 `world_map_location` / 世界模拟的自动定位全靠它。
+      #
+      # 现在只跑 `pnpm android:prepare`（= `tauri android init` + 生成图标）：
+      # `tauri android init` 对**已存在的文件是非破坏性的**（实测：不会覆盖自写 Kotlin），
+      # 所以既保留定制、又保证工程结构是最新的。
+      # 另外 `build-android.yml` / `dev-build-android.yml` 本来就是这么做的，这里与它们对齐。
+      - name: Prepare Android project (保留自写的 Android 文件！)
+        run: pnpm android:prepare
 
+      # 必须是 **debug** 包：`tauri android build --apk` 默认出的是 **release**，
+      # 而我们没有配置签名 → 未签名 APK **装不上手机**（`adb install` 直接报
+      # INSTALL_PARSE_FAILED_NO_CERTIFICATES）。`-d` 出的 debug 包用 debug keystore 签名，
+      # 可以直接安装试用。官方 package.json 里的 `android:devbuild` 也是这个写法。
       - name: Build APK (debug)
-        run: pnpm android:build
+        run: node scripts/prepare-bundled-resources.mjs 9 && pnpm tauri android build -d -t aarch64 --apk
+
+      - name: 列出产物（排障用：路径不对时能一眼看出）
+        run: find src-tauri/gen/android/app/build/outputs -name '*.apk' -exec ls -la {} \;
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -69,4 +89,4 @@ jobs:
           name: lingchat-debug-apk
           path: |
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
