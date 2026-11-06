@@ -40,7 +40,11 @@ jobs:
           java-version: '21'
 
       # Android SDK + NDK
+      # 2026-11-06：setup-android@v3 默认 packages 含 tools，而新 runner 镜像已移除该包，
+      # sdkmanager 会以退出码 1 失败并把后面所有步骤 skip。显式只装 platform-tools，NDK 单独装。
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
       - name: Install NDK
         run: |
           sdkmanager "ndk;28.2.13676358"
